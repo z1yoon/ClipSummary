@@ -1,0 +1,27 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Swirl pattern with multiple vector paths at different opacities -->
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="1000 1000" stroke-opacity="0.05"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="881 1000" stroke-opacity="0.1"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="764 1000" stroke-opacity="0.14"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="655 1000" stroke-opacity="0.19"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="554 1000" stroke-opacity="0.23"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="462 1000" stroke-opacity="0.28"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="378 1000" stroke-opacity="0.32"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="302 933" stroke-opacity="0.37"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="235 829" stroke-opacity="0.41"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="176 726" stroke-opacity="0.46"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="126 622" stroke-opacity="0.5"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="84 518" stroke-opacity="0.55"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="50 415" stroke-opacity="0.59"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="25 311" stroke-opacity="0.64"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-dasharray="8 207" stroke-opacity="0.68"/>
+  <path d="M720 900C1117.56 900 1440 577.565 1440 180C1440 -217.565 1117.56 -540 720 -540C322.435 -540 0 -217.565 0 180C0 577.565 322.435 900 720 900Z" stroke="url(#gradient1)" stroke-opacity="0.73"/>
+  
+  <!-- Gradients -->
+  <defs>
+    <linearGradient id="gradient1" x1="720" y1="0" x2="720" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1F89DB"/>
+      <stop offset="0.28125" stop-color="#F42A8B"/>
+    </linearGradient>
+  </defs>
+</svg>

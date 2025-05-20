@@ -1,0 +1,270 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "frontendImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Container image for the frontend"
+      }
+    },
+    "backendImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Container image for the backend"
+      }
+    },
+    "containerRegistryUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "URL of the container registry"
+      }
+    },
+    "containerRegistryUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "Username for the container registry"
+      }
+    },
+    "containerRegistryPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Password for the container registry"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all resources"
+      }
+    },
+    "environmentName": {
+      "type": "string",
+      "defaultValue": "clipsummary-env",
+      "metadata": {
+        "description": "Name of the Container Apps Environment"
+      }
+    },
+    "logAnalyticsWorkspaceName": {
+      "type": "string",
+      "defaultValue": "[format('logs-{0}', uniqueString(resourceGroup().id))]",
+      "metadata": {
+        "description": "Name of the Log Analytics workspace"
+      }
+    },
+    "youtubeApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "YouTube API Key for video processing"
+      }
+    },
+    "redisConnectionString": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Redis connection string for caching (optional)"
+      }
+    }
+  },
+  "variables": {
+    "frontendAppName": "clipsummary-frontend",
+    "backendAppName": "clipsummary-backend",
+    "registrySecretName": "container-registry-secret"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2021-06-01",
+      "name": "[parameters('logAnalyticsWorkspaceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2022-03-01",
+      "name": "[parameters('environmentName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), '2021-06-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), '2021-06-01').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2022-03-01",
+      "name": "[variables('backendAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
+        "configuration": {
+          "secrets": [
+            {
+              "name": "[variables('registrySecretName')]",
+              "value": "[parameters('containerRegistryPassword')]"
+            },
+            {
+              "name": "youtube-api-key",
+              "value": "[parameters('youtubeApiKey')]"
+            },
+            {
+              "name": "redis-connection-string",
+              "value": "[parameters('redisConnectionString')]"
+            }
+          ],
+          "registries": [
+            {
+              "server": "[parameters('containerRegistryUrl')]",
+              "username": "[parameters('containerRegistryUsername')]",
+              "passwordSecretRef": "[variables('registrySecretName')]"
+            }
+          ],
+          "ingress": {
+            "external": true,
+            "targetPort": 8000,
+            "allowInsecure": false,
+            "traffic": [
+              {
+                "latestRevision": true,
+                "weight": 100
+              }
+            ],
+            "corsPolicy": {
+              "allowedOrigins": ["*"],
+              "allowedMethods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+              "allowedHeaders": ["*"],
+              "maxAge": 86400
+            },
+            "transport": "http2",
+            "exposedPort": 0,
+            "pathRewrite": "/api/{*path}",
+            "pathPrefix": "/api"
+          }
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "backend",
+              "image": "[parameters('backendImage')]",
+              "env": [
+                {
+                  "name": "YOUTUBE_API_KEY",
+                  "secretRef": "youtube-api-key"
+                },
+                {
+                  "name": "REDIS_URL",
+                  "secretRef": "redis-connection-string"
+                }
+              ],
+              "resources": {
+                "cpu": "1.0",
+                "memory": "2Gi"
+              }
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 5,
+            "rules": [
+              {
+                "name": "http-scale",
+                "http": {
+                  "metadata": {
+                    "concurrentRequests": "10"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2022-03-01",
+      "name": "[variables('frontendAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
+        "configuration": {
+          "secrets": [
+            {
+              "name": "[variables('registrySecretName')]",
+              "value": "[parameters('containerRegistryPassword')]"
+            }
+          ],
+          "registries": [
+            {
+              "server": "[parameters('containerRegistryUrl')]",
+              "username": "[parameters('containerRegistryUsername')]",
+              "passwordSecretRef": "[variables('registrySecretName')]"
+            }
+          ],
+          "ingress": {
+            "external": true,
+            "targetPort": 80,
+            "allowInsecure": false,
+            "traffic": [
+              {
+                "latestRevision": true,
+                "weight": 100
+              }
+            ]
+          }
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "frontend",
+              "image": "[parameters('frontendImage')]",
+              "env": [
+                {
+                  "name": "BACKEND_URL",
+                  "value": "[concat('https://', reference(resourceId('Microsoft.App/containerApps', variables('backendAppName'))).configuration.ingress.fqdn, '/api')]"
+                }
+              ],
+              "resources": {
+                "cpu": "0.5",
+                "memory": "1Gi"
+              }
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 3
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/containerApps', variables('backendAppName'))]",
+        "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "frontendUrl": {
+      "type": "string",
+      "value": "[concat('https://', reference(resourceId('Microsoft.App/containerApps', variables('frontendAppName'))).configuration.ingress.fqdn)]"
+    },
+    "backendUrl": {
+      "type": "string",
+      "value": "[concat('https://', reference(resourceId('Microsoft.App/containerApps', variables('backendAppName'))).configuration.ingress.fqdn, '/api')]"
+    }
+  }
+}

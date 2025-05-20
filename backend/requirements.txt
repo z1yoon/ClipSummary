@@ -1,0 +1,36 @@
+# Core dependencies
+fastapi==0.104.0
+uvicorn==0.23.2
+python-multipart==0.0.6
+pydantic==2.4.2
+python-jose==3.3.0
+python-dotenv==1.0.0
+httpx==0.25.0
+
+# Database and caching
+redis==5.0.1
+
+# Media processing
+ffmpeg-python==0.2.0
+yt-dlp==2023.10.13
+
+# ML libraries - updated versions to be compatible with whisperX
+torch>=2.5.1
+transformers>=4.48.0
+sentencepiece==0.1.99
+accelerate==0.23.0
+
+# Google API
+google-api-python-client==2.108.0
+pytube==15.0.0
+
+# PyTZ explicitly for pandas dependency
+pytz>=2020.1
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-html==3.2.0
+
+# Install WhisperX last to avoid dependency conflicts
+git+https://github.com/m-bain/whisperX.git

@@ -1,0 +1,116 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package.json
+      
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+      
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+      
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-html
+      
+      - name: Run backend unit tests
+        run: |
+          cd backend
+          python -m pytest tests/unit/ -v --cov=./ --cov-report=xml --cov-report=html --html=unit-test-report.html --self-contained-html
+      
+      - name: Run backend integration tests
+        run: |
+          cd backend
+          python -m pytest tests/integration/ -v --cov=./ --cov-append --cov-report=xml:coverage.xml --cov-report=html:htmlcov --html=integration-test-report.html --self-contained-html
+      
+      - name: Upload test reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-reports
+          path: |
+            backend/htmlcov/
+            backend/*-test-report.html
+            backend/coverage.xml
+          retention-days: 7
+  
+  deploy-to-azure:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Build and push frontend container
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-frontend:${{ github.sha }} ./frontend
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-frontend:${{ github.sha }}
+      
+      - name: Build and push backend container
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-backend:${{ github.sha }} ./backend
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-backend:${{ github.sha }}
+      
+      - name: Build and push nginx container
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-nginx:${{ github.sha }} ./nginx
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-nginx:${{ github.sha }}
+      
+      - name: Deploy to Azure Container Apps
+        uses: azure/arm-deploy@v1
+        with:
+          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          template: ./azure-pipeline/templates/container-apps.json
+          parameters: >
+            frontendImage=${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-frontend:${{ github.sha }}
+            backendImage=${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-backend:${{ github.sha }}
+            nginxImage=${{ secrets.ACR_LOGIN_SERVER }}/clipsummary-nginx:${{ github.sha }}
+            containerRegistryUrl=${{ secrets.ACR_LOGIN_SERVER }}
+            containerRegistryUsername=${{ secrets.ACR_USERNAME }}
+            containerRegistryPassword=${{ secrets.ACR_PASSWORD }}
+      
+      - name: Logout from Azure
+        run: |
+          az logout

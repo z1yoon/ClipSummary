@@ -1,0 +1,13 @@
+{
+  "name": "clipsummary-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for ClipSummary video summarization application",
+  "scripts": {
+    "start": "http-server -p 3000 --cors -c-1",
+    "build": "mkdir -p dist && cp -r index.html css js images dist/",
+    "dev": "http-server -p 3000 --cors -c-1 -o"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
