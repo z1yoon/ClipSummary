@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClipSummary - Video Player</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/video-page.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background">
+        <div class="swirl"></div>
+        <div class="cubes"></div>
+        <div class="gradient-overlay"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <div class="logo">
+                <h1>ClipSummary<span class="registered">®</span></h1>
+            </div>
+            <div class="nav-buttons">
+                <a href="#" class="btn btn-dark">
+                    <i class="fa-solid fa-sign-in"></i>
+                    Login
+                </a>
+                <a href="#" class="btn btn-primary">Register Now</a>
+            </div>
+        </header>
+
+        <main class="video-page">
+            <div class="video-container">
+                <div class="video-player">
+                    <video id="video-element" controls poster="images/video-thumbnail.jpg">
+                        <source src="" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="video-controls">
+                        <div class="progress-bar">
+                            <div class="progress-filled"></div>
+                        </div>
+                        <div class="controls-bottom">
+                            <div class="left-controls">
+                                <button class="play-pause-btn">
+                                    <i class="fa-solid fa-play"></i>
+                                </button>
+                                <div class="volume-container">
+                                    <button class="volume-btn">
+                                        <i class="fa-solid fa-volume-high"></i>
+                                    </button>
+                                    <div class="volume-slider">
+                                        <div class="volume-filled"></div>
+                                    </div>
+                                </div>
+                                <div class="time-display">00:00 / 00:00</div>
+                            </div>
+                            <div class="right-controls">
+                                <div class="language-selector">
+                                    <button class="language-btn">
+                                        <i class="fa-solid fa-globe"></i>
+                                        <span>Subtitles</span>
+                                    </button>
+                                    <div class="language-dropdown">
+                                        <div class="dropdown-title">Select Languages</div>
+                                        <div class="language-options">
+                                            <label><input type="checkbox" value="en" checked> English</label>
+                                            <label><input type="checkbox" value="es"> Spanish</label>
+                                            <label><input type="checkbox" value="fr"> French</label>
+                                            <label><input type="checkbox" value="de"> German</label>
+                                            <label><input type="checkbox" value="zh"> Chinese</label>
+                                            <label><input type="checkbox" value="ja"> Japanese</label>
+                                            <label><input type="checkbox" value="ko"> Korean</label>
+                                        </div>
+                                        <button class="btn-apply">Apply</button>
+                                    </div>
+                                </div>
+                                <button class="fullscreen-btn">
+                                    <i class="fa-solid fa-expand"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="subtitles-container"></div>
+                </div>
+            </div>
+            
+            <div class="content-container">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="summary">Summary</button>
+                    <button class="tab-btn" data-tab="transcript">Full Transcript</button>
+                </div>
+                
+                <div class="tab-content">
+                    <div class="tab-pane active" id="summary">
+                        <h2>Video Summary</h2>
+                        <div class="summary-content">
+                            <p>This video explores the fascinating world of advanced AI systems and their potential impact on society. The speaker discusses three main points:</p>
+                            <ul>
+                                <li>The current state of AI technology and recent breakthroughs in machine learning</li>
+                                <li>Ethical considerations and potential risks associated with advanced AI systems</li>
+                                <li>Future directions and how AI might transform various industries in the next decade</li>
+                            </ul>
+                            <p>The presentation concludes with practical recommendations for businesses and policymakers to ensure AI development remains beneficial for humanity.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="tab-pane" id="transcript">
+                        <h2>Full Transcript</h2>
+                        <div class="transcript-content">
+                            <div class="transcript-entry">
+                                <span class="timestamp">00:00:15</span>
+                                <p>Hello everyone, and welcome to today's presentation on advanced AI systems.</p>
+                            </div>
+                            <div class="transcript-entry">
+                                <span class="timestamp">00:00:22</span>
+                                <p>I'm excited to discuss the recent developments in artificial intelligence and what they mean for our future.</p>
+                            </div>
+                            <div class="transcript-entry">
+                                <span class="timestamp">00:00:35</span>
+                                <p>Let's begin by examining the current state of AI technology and some of the most impressive breakthroughs we've seen recently.</p>
+                            </div>
+                            <!-- More transcript entries would go here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="js/video-player.js"></script>
+</body>
+</html>
