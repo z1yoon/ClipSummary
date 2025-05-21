@@ -1,7 +1,7 @@
 import os
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 import redis
 from dotenv import load_dotenv
 
@@ -151,3 +151,78 @@ def clear_cache(key_pattern: str = None) -> bool:
         success = False
     
     return success
+
+def update_processing_status(
+    upload_id: str,
+    status: str,
+    progress: Union[int, float] = 0,
+    message: str = "",
+    error: str = None
+) -> bool:
+    """
+    Update the processing status for a video upload
+    
+    Args:
+        upload_id: Unique identifier for the upload
+        status: Current status (uploading, processing, completed, failed, error)
+        progress: Progress percentage (0-100)
+        message: Status message to display
+        error: Error message if status is 'error' or 'failed'
+        
+    Returns:
+        True if status was updated successfully, False otherwise
+    """
+    try:
+        status_data = {
+            "status": status,
+            "progress": float(progress),
+            "message": message,
+            "timestamp": time.time(),
+            "error": error
+        }
+        
+        # Save to status file in uploads directory
+        upload_dir = os.path.join("uploads", upload_id)
+        os.makedirs(upload_dir, exist_ok=True)
+        status_file = os.path.join(upload_dir, "status.json")
+        
+        with open(status_file, 'w') as f:
+            json.dump(status_data, f)
+        
+        # Also cache in Redis for faster access
+        cache_key = f"processing_status:{upload_id}"
+        cache_result(cache_key, status_data, ttl=3600)  # Cache for 1 hour
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error updating processing status: {str(e)}")
+        return False
+
+def get_processing_status(upload_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get the current processing status for a video upload
+    
+    Args:
+        upload_id: Unique identifier for the upload
+        
+    Returns:
+        Status data if found, None otherwise
+    """
+    try:
+        # Try Redis cache first
+        cache_key = f"processing_status:{upload_id}"
+        cached_status = get_cached_result(cache_key)
+        if cached_status:
+            return cached_status
+        
+        # Fallback to status file
+        status_file = os.path.join("uploads", upload_id, "status.json")
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                return json.load(f)
+                
+    except Exception as e:
+        print(f"Error getting processing status: {str(e)}")
+    
+    return None

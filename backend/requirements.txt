@@ -7,30 +7,26 @@ python-jose==3.3.0
 python-dotenv==1.0.0
 httpx==0.25.0
 
+# Authentication and security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+bcrypt==3.2.2  # Downgraded for compatibility with passlib
+
 # Database and caching
 redis==5.0.1
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+alembic==1.13.1
 
 # Media processing
 ffmpeg-python==0.2.0
 yt-dlp==2023.10.13
 
-# ML libraries - updated versions to be compatible with whisperX
-torch>=2.5.1
-transformers>=4.48.0
-sentencepiece==0.1.99
-accelerate==0.23.0
-
-# Google API
-google-api-python-client==2.108.0
-pytube==15.0.0
-
-# PyTZ explicitly for pandas dependency
-pytz>=2020.1
-
-# Testing
-pytest==7.4.3
-pytest-cov==4.1.0
-pytest-html==3.2.0
-
-# Install WhisperX last to avoid dependency conflicts
-git+https://github.com/m-bain/whisperX.git
+# AI and ML dependencies
+numpy==1.24.3  # Pin NumPy to version before 2.0
+whisperx==3.1.1
+torch==2.1.2
+transformers==4.37.2
+accelerate==0.25.0
+optimum==1.16.1
+bitsandbytes==0.41.3

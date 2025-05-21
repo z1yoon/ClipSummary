@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="32" height="32">
+  <!-- Dark background circle -->
+  <circle cx="256" cy="256" r="256" fill="#1A1625"/>
+  
+  <!-- Outer ring with gradient -->
+  <path d="M256,65c105.5,0,191,85.5,191,191s-85.5,191-191,191S65,361.5,65,256S150.5,65,256,65" fill="none" stroke="url(#gradient)" stroke-width="30" stroke-dasharray="35 15"/>
+  
+  <!-- Play button triangle with gradient -->
+  <polygon points="205,170 340,255 205,340" fill="url(#gradient2)"/>
+  
+  <!-- Gradients definition -->
+  <defs>
+    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF0080"/>
+      <stop offset="50%" style="stop-color:#9C27B0"/>
+      <stop offset="100%" style="stop-color:#2979FF"/>
+    </linearGradient>
+    <linearGradient id="gradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF0080"/>
+      <stop offset="50%" style="stop-color:#9C27B0"/>
+      <stop offset="100%" style="stop-color:#2979FF"/>
+    </linearGradient>
+  </defs>
+</svg>

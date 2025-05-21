@@ -1,301 +1,367 @@
-// Video player functionality
-document.addEventListener('DOMContentLoaded', function() {
-    // Video elements
-    const videoElement = document.getElementById('video-element');
-    const videoContainer = document.querySelector('.video-player');
-    const playPauseBtn = document.querySelector('.play-pause-btn');
-    const volumeBtn = document.querySelector('.volume-btn');
-    const volumeSlider = document.querySelector('.volume-slider');
-    const volumeFilled = document.querySelector('.volume-filled');
-    const fullscreenBtn = document.querySelector('.fullscreen-btn');
-    const progressBar = document.querySelector('.progress-bar');
-    const progressFilled = document.querySelector('.progress-filled');
-    const timeDisplay = document.querySelector('.time-display');
-    const languageBtn = document.querySelector('.language-btn');
-    const languageDropdown = document.querySelector('.language-dropdown');
-    const applyBtn = document.querySelector('.btn-apply');
-    const languageOptions = document.querySelectorAll('.language-options input[type="checkbox"]');
-    const subtitlesContainer = document.querySelector('.subtitles-container');
-    
-    // Tab functionality
-    const tabBtns = document.querySelectorAll('.tab-btn');
-    const tabPanes = document.querySelectorAll('.tab-pane');
-
-    // Initialize video source dynamically - would come from server
-    function initVideo() {
-        // This would typically be populated from backend data
-        const videoId = new URLSearchParams(window.location.search).get('id');
+class VideoPlayer {
+    constructor(videoElement, container) {
+        this.video = videoElement;
+        this.container = container;
+        this.currentLanguage = 'en';
+        this.availableLanguages = ['en'];
+        this.subtitles = {};
+        this.currentProgress = 0;
+        this.summary = '';
         
-        if (videoId) {
-            // In production, this would be a call to your API to get video details
-            console.log(`Loading video with ID: ${videoId}`);
-            // For demo purposes, use a sample video
-            videoElement.src = "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
-        } else {
-            console.log("No video ID provided in URL");
-            // Use a placeholder video for demo
-            videoElement.src = "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
-        }
-    }
-
-    // Helper function to format time
-    function formatTime(seconds) {
-        const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = Math.floor(seconds % 60);
-        return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-    }
-
-    // Update video time display
-    function updateTimeDisplay() {
-        const currentTime = formatTime(videoElement.currentTime);
-        const duration = formatTime(videoElement.duration || 0);
-        timeDisplay.textContent = `${currentTime} / ${duration}`;
+        this.initializePlayer();
     }
     
-    // Update progress bar
-    function updateProgressBar() {
-        const percent = (videoElement.currentTime / videoElement.duration) * 100;
-        progressFilled.style.width = `${percent}%`;
-        updateTimeDisplay();
-    }
-    
-    // Play/pause functionality
-    function togglePlay() {
-        if (videoElement.paused) {
-            videoElement.play();
-            playPauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-        } else {
-            videoElement.pause();
-            playPauseBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
-        }
-    }
-    
-    // Volume functionality
-    function toggleMute() {
-        videoElement.muted = !videoElement.muted;
+    initializePlayer() {
+        // Create video controls
+        this.createVideoControls();
         
-        if (videoElement.muted) {
-            volumeBtn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
-            volumeFilled.style.width = '0%';
-        } else {
-            volumeBtn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
-            volumeFilled.style.width = `${videoElement.volume * 100}%`;
-        }
+        // Create subtitle display
+        this.createSubtitleDisplay();
+        
+        // Create content tabs
+        this.createContentTabs();
+        
+        // Add event listeners
+        this.addEventListeners();
     }
     
-    function updateVolume(e) {
-        const rect = volumeSlider.getBoundingClientRect();
-        const position = (e.clientX - rect.left) / rect.width;
-        const volume = Math.max(0, Math.min(1, position));
+    createVideoControls() {
+        const controls = document.createElement('div');
+        controls.className = 'video-controls';
         
-        videoElement.volume = volume;
-        volumeFilled.style.width = `${volume * 100}%`;
+        // Progress bar
+        const progressBar = document.createElement('div');
+        progressBar.className = 'progress-bar';
+        const progressFilled = document.createElement('div');
+        progressFilled.className = 'progress-filled';
+        progressBar.appendChild(progressFilled);
         
-        if (volume === 0) {
-            volumeBtn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
-            videoElement.muted = true;
-        } else {
-            volumeBtn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
-            videoElement.muted = false;
-        }
-    }
-    
-    // Fullscreen functionality
-    function toggleFullscreen() {
-        if (!document.fullscreenElement) {
-            if (videoContainer.requestFullscreen) {
-                videoContainer.requestFullscreen();
-            } else if (videoContainer.webkitRequestFullscreen) { /* Safari */
-                videoContainer.webkitRequestFullscreen();
-            } else if (videoContainer.msRequestFullscreen) { /* IE11 */
-                videoContainer.msRequestFullscreen();
-            }
-            fullscreenBtn.innerHTML = '<i class="fa-solid fa-compress"></i>';
-        } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) { /* Safari */
-                document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) { /* IE11 */
-                document.msExitFullscreen();
-            }
-            fullscreenBtn.innerHTML = '<i class="fa-solid fa-expand"></i>';
-        }
-    }
-    
-    // Progress bar functionality
-    function scrub(e) {
-        const rect = progressBar.getBoundingClientRect();
-        const percent = (e.clientX - rect.left) / rect.width;
-        videoElement.currentTime = percent * videoElement.duration;
-    }
-    
-    // Subtitle functionality
-    let selectedLanguages = ['en']; // Default to English
-    
-    function updateSubtitles() {
-        // This is a simplified example using hardcoded subtitles
-        // In a real app, you'd get subtitles from your API
+        // Controls bottom
+        const controlsBottom = document.createElement('div');
+        controlsBottom.className = 'controls-bottom';
         
-        // Clear existing subtitles
-        subtitlesContainer.innerHTML = '';
+        // Left controls
+        const leftControls = document.createElement('div');
+        leftControls.className = 'left-controls';
+        leftControls.innerHTML = `
+            <button class="play-pause-btn">
+                <i class="fas fa-play"></i>
+            </button>
+            <div class="volume-container">
+                <button class="volume-btn">
+                    <i class="fas fa-volume-high"></i>
+                </button>
+                <div class="volume-slider">
+                    <div class="volume-filled"></div>
+                </div>
+            </div>
+            <div class="time-display">0:00 / 0:00</div>
+        `;
         
-        // Current time in seconds
-        const currentTime = videoElement.currentTime;
+        // Right controls
+        const rightControls = document.createElement('div');
+        rightControls.className = 'right-controls';
+        rightControls.innerHTML = `
+            <div class="language-selector">
+                <button class="language-btn">
+                    <i class="fas fa-closed-captioning"></i>
+                    <span>English</span>
+                </button>
+                <div class="language-dropdown">
+                    <div class="dropdown-title">Select Subtitles</div>
+                    <div class="language-options"></div>
+                    <button class="btn-apply">Apply</button>
+                </div>
+            </div>
+            <button class="fullscreen-btn">
+                <i class="fas fa-expand"></i>
+            </button>
+        `;
         
-        // Example subtitle data (would come from backend)
-        const subtitleData = {
-            en: [
-                { start: 0, end: 3, text: "Hello everyone, welcome to this video." },
-                { start: 4, end: 7, text: "Today we'll explore an interesting topic." },
-                { start: 8, end: 12, text: "Let's get started." }
-            ],
-            es: [
-                { start: 0, end: 3, text: "Hola a todos, bienvenidos a este video." },
-                { start: 4, end: 7, text: "Hoy exploraremos un tema interesante." },
-                { start: 8, end: 12, text: "Comencemos." }
-            ],
-            fr: [
-                { start: 0, end: 3, text: "Bonjour à tous, bienvenue dans cette vidéo." },
-                { start: 4, end: 7, text: "Aujourd'hui, nous allons explorer un sujet intéressant." },
-                { start: 8, end: 12, text: "Commençons." }
-            ],
-            de: [
-                { start: 0, end: 3, text: "Hallo zusammen, willkommen zu diesem Video." },
-                { start: 4, end: 7, text: "Heute werden wir ein interessantes Thema erkunden." },
-                { start: 8, end: 12, text: "Lass uns anfangen." }
-            ],
-            zh: [
-                { start: 0, end: 3, text: "大家好，欢迎收看此视频。" },
-                { start: 4, end: 7, text: "今天我们将探索一个有趣的话题。" },
-                { start: 8, end: 12, text: "让我们开始吧。" }
-            ],
-            ja: [
-                { start: 0, end: 3, text: "皆さん、こんにちは。このビデオへようこそ。" },
-                { start: 4, end: 7, text: "今日は興味深いトピックを探ります。" },
-                { start: 8, end: 12, text: "始めましょう。" }
-            ],
-            ko: [
-                { start: 0, end: 3, text: "여러분, 안녕하세요. 이 비디오에 오신 것을 환영합니다." },
-                { start: 4, end: 7, text: "오늘은 흥미로운 주제를 살펴보겠습니다." },
-                { start: 8, end: 12, text: "시작하겠습니다." }
-            ]
+        controlsBottom.appendChild(leftControls);
+        controlsBottom.appendChild(rightControls);
+        
+        controls.appendChild(progressBar);
+        controls.appendChild(controlsBottom);
+        
+        this.container.appendChild(controls);
+        
+        // Store elements for later use
+        this.controls = {
+            progressBar,
+            progressFilled,
+            playPauseBtn: leftControls.querySelector('.play-pause-btn'),
+            volumeBtn: leftControls.querySelector('.volume-btn'),
+            volumeSlider: leftControls.querySelector('.volume-slider'),
+            volumeFilled: leftControls.querySelector('.volume-filled'),
+            timeDisplay: leftControls.querySelector('.time-display'),
+            languageBtn: rightControls.querySelector('.language-btn'),
+            languageDropdown: rightControls.querySelector('.language-dropdown'),
+            languageOptions: rightControls.querySelector('.language-options'),
+            applyBtn: rightControls.querySelector('.btn-apply'),
+            fullscreenBtn: rightControls.querySelector('.fullscreen-btn')
         };
+    }
+    
+    createSubtitleDisplay() {
+        const subtitlesContainer = document.createElement('div');
+        subtitlesContainer.className = 'subtitles-container';
+        this.container.appendChild(subtitlesContainer);
+        this.subtitlesContainer = subtitlesContainer;
+    }
+    
+    createContentTabs() {
+        const contentContainer = document.createElement('div');
+        contentContainer.className = 'content-container';
         
-        // Display subtitles for each selected language
-        selectedLanguages.forEach(lang => {
-            if (!subtitleData[lang]) return;
-            
-            const langSubtitles = subtitleData[lang];
-            const currentSubtitles = langSubtitles.filter(sub => 
-                currentTime >= sub.start && currentTime <= sub.end
-            );
-            
-            if (currentSubtitles.length > 0) {
-                const subtitle = document.createElement('div');
-                subtitle.className = `subtitle ${lang}`;
-                subtitle.textContent = currentSubtitles[0].text;
-                subtitlesContainer.appendChild(subtitle);
-            }
+        // Create tabs
+        const tabs = document.createElement('div');
+        tabs.className = 'tabs';
+        tabs.innerHTML = `
+            <button class="tab-btn active" data-tab="summary">Summary</button>
+            <button class="tab-btn" data-tab="transcript">Transcript</button>
+            <button class="tab-btn" data-tab="settings">Language Settings</button>
+        `;
+        
+        // Create tab content
+        const tabContent = document.createElement('div');
+        tabContent.className = 'tab-content';
+        tabContent.innerHTML = `
+            <div id="summary" class="tab-pane active">
+                <h2>Summary</h2>
+                <div class="summary-content"></div>
+            </div>
+            <div id="transcript" class="tab-pane">
+                <h2>Transcript</h2>
+                <div class="transcript-content"></div>
+            </div>
+            <div id="settings" class="tab-pane">
+                <h2>Language Settings</h2>
+                <div class="settings-content">
+                    <div class="language-settings"></div>
+                </div>
+            </div>
+        `;
+        
+        contentContainer.appendChild(tabs);
+        contentContainer.appendChild(tabContent);
+        
+        this.container.appendChild(contentContainer);
+        
+        // Store elements
+        this.content = {
+            tabs: tabs.querySelectorAll('.tab-btn'),
+            panes: tabContent.querySelectorAll('.tab-pane'),
+            summary: tabContent.querySelector('.summary-content'),
+            transcript: tabContent.querySelector('.transcript-content'),
+            settings: tabContent.querySelector('.language-settings')
+        };
+    }
+    
+    addEventListeners() {
+        // Video controls
+        this.video.addEventListener('play', () => this.updatePlayButton());
+        this.video.addEventListener('pause', () => this.updatePlayButton());
+        this.video.addEventListener('timeupdate', () => this.updateProgress());
+        this.video.addEventListener('loadedmetadata', () => this.updateTimeDisplay());
+        
+        // Control buttons
+        this.controls.playPauseBtn.addEventListener('click', () => this.togglePlay());
+        this.controls.volumeBtn.addEventListener('click', () => this.toggleMute());
+        this.controls.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
+        
+        // Progress bar
+        this.controls.progressBar.addEventListener('click', (e) => this.scrub(e));
+        
+        // Volume slider
+        this.controls.volumeSlider.addEventListener('click', (e) => this.updateVolume(e));
+        
+        // Language selection
+        this.controls.languageBtn.addEventListener('click', () => this.toggleLanguageDropdown());
+        this.controls.applyBtn.addEventListener('click', () => this.applyLanguageSelection());
+        
+        // Tabs
+        this.content.tabs.forEach(tab => {
+            tab.addEventListener('click', () => this.switchTab(tab));
         });
     }
     
-    // Tab switching functionality
-    function switchTab(e) {
-        const tabTarget = e.target.dataset.tab;
-        
-        // Update active state for buttons
-        tabBtns.forEach(btn => {
-            btn.classList.remove('active');
-        });
-        e.target.classList.add('active');
-        
-        // Update active state for content
-        tabPanes.forEach(pane => {
-            pane.classList.remove('active');
-        });
-        document.getElementById(tabTarget).classList.add('active');
+    // Video control methods
+    togglePlay() {
+        if (this.video.paused) {
+            this.video.play();
+        } else {
+            this.video.pause();
+        }
     }
     
-    // Interactive transcript functionality
-    function setupTranscriptInteraction() {
-        // Make transcript timestamps clickable to jump to that point in the video
-        const timestamps = document.querySelectorAll('.timestamp');
+    updatePlayButton() {
+        const icon = this.controls.playPauseBtn.querySelector('i');
+        icon.className = this.video.paused ? 'fas fa-play' : 'fas fa-pause';
+    }
+    
+    updateProgress() {
+        const percent = (this.video.currentTime / this.video.duration) * 100;
+        this.controls.progressFilled.style.width = `${percent}%`;
+        this.updateTimeDisplay();
+        this.updateSubtitles();
+    }
+    
+    updateTimeDisplay() {
+        const time = `${formatTime(this.video.currentTime)} / ${formatTime(this.video.duration)}`;
+        this.controls.timeDisplay.textContent = time;
+    }
+    
+    scrub(e) {
+        const rect = this.controls.progressBar.getBoundingClientRect();
+        const percent = (e.clientX - rect.left) / rect.width;
+        this.video.currentTime = percent * this.video.duration;
+    }
+    
+    // Subtitle methods
+    loadSubtitles(language, subtitles) {
+        this.subtitles[language] = subtitles;
+        this.updateLanguageOptions();
+    }
+    
+    updateSubtitles() {
+        if (!this.subtitles[this.currentLanguage]) return;
         
-        timestamps.forEach(timestamp => {
-            timestamp.style.cursor = 'pointer';
-            timestamp.addEventListener('click', function() {
-                const timeString = this.textContent;
-                const [minutes, seconds] = timeString.split(':').map(Number);
-                const timeInSeconds = minutes * 60 + seconds;
-                
-                videoElement.currentTime = timeInSeconds;
-                if (videoElement.paused) {
-                    togglePlay();
+        const currentTime = this.video.currentTime;
+        const currentSubtitles = this.subtitles[this.currentLanguage].filter(sub => 
+            currentTime >= sub.start && currentTime <= sub.end
+        );
+        
+        this.subtitlesContainer.innerHTML = '';
+        if (currentSubtitles.length > 0) {
+            const subtitle = document.createElement('div');
+            subtitle.className = `subtitle ${this.currentLanguage}`;
+            subtitle.textContent = currentSubtitles[0].text;
+            this.subtitlesContainer.appendChild(subtitle);
+        }
+        
+        // Update transcript highlight
+        this.highlightCurrentTranscript(currentTime);
+    }
+    
+    updateLanguageOptions() {
+        const options = this.controls.languageOptions;
+        options.innerHTML = '';
+        
+        Object.keys(this.subtitles).forEach(lang => {
+            const label = document.createElement('label');
+            const input = document.createElement('input');
+            input.type = 'radio';
+            input.name = 'subtitle-language';
+            input.value = lang;
+            input.checked = lang === this.currentLanguage;
+            
+            label.appendChild(input);
+            label.appendChild(document.createTextNode(getLanguageName(lang)));
+            options.appendChild(label);
+        });
+    }
+    
+    toggleLanguageDropdown() {
+        this.controls.languageDropdown.classList.toggle('active');
+    }
+    
+    applyLanguageSelection() {
+        const selected = this.controls.languageOptions.querySelector('input:checked');
+        if (selected) {
+            this.currentLanguage = selected.value;
+            this.controls.languageBtn.querySelector('span').textContent = getLanguageName(this.currentLanguage);
+            this.updateTranscript();
+        }
+        this.toggleLanguageDropdown();
+    }
+    
+    // Content methods
+    loadSummary(summary) {
+        this.summary = summary;
+        this.content.summary.innerHTML = `<p>${summary}</p>`;
+    }
+    
+    updateTranscript() {
+        const transcript = this.subtitles[this.currentLanguage];
+        if (!transcript) return;
+        
+        const container = this.content.transcript;
+        container.innerHTML = '';
+        
+        transcript.forEach(segment => {
+            const entry = document.createElement('div');
+            entry.className = 'transcript-entry';
+            entry.dataset.start = segment.start;
+            entry.dataset.end = segment.end;
+            
+            const timestamp = document.createElement('span');
+            timestamp.className = 'timestamp';
+            timestamp.textContent = formatTime(segment.start);
+            
+            const text = document.createElement('p');
+            text.textContent = segment.text;
+            
+            entry.appendChild(timestamp);
+            entry.appendChild(text);
+            
+            entry.addEventListener('click', () => {
+                this.video.currentTime = segment.start;
+                if (this.video.paused) {
+                    this.video.play();
                 }
             });
+            
+            container.appendChild(entry);
         });
     }
     
-    // Event listeners
-    videoElement.addEventListener('timeupdate', updateProgressBar);
-    videoElement.addEventListener('timeupdate', updateSubtitles);
-    videoElement.addEventListener('loadedmetadata', updateTimeDisplay);
-    videoElement.addEventListener('click', togglePlay);
-    
-    playPauseBtn.addEventListener('click', togglePlay);
-    volumeBtn.addEventListener('click', toggleMute);
-    volumeSlider.addEventListener('click', updateVolume);
-    fullscreenBtn.addEventListener('click', toggleFullscreen);
-    
-    let mousedown = false;
-    progressBar.addEventListener('click', scrub);
-    progressBar.addEventListener('mousedown', () => { mousedown = true; });
-    progressBar.addEventListener('mouseup', () => { mousedown = false; });
-    progressBar.addEventListener('mousemove', (e) => { if (mousedown) scrub(e); });
-    
-    // Handle language selection dropdown
-    languageBtn.addEventListener('click', function() {
-        const isVisible = languageDropdown.style.display === 'block';
-        languageDropdown.style.display = isVisible ? 'none' : 'block';
-    });
-    
-    // Close dropdown when clicking outside
-    document.addEventListener('click', function(e) {
-        if (!languageBtn.contains(e.target) && !languageDropdown.contains(e.target)) {
-            languageDropdown.style.display = 'none';
-        }
-    });
-    
-    // Apply selected languages
-    applyBtn.addEventListener('click', function() {
-        selectedLanguages = Array.from(languageOptions)
-            .filter(option => option.checked)
-            .map(option => option.value);
-        
-        languageDropdown.style.display = 'none';
-        updateSubtitles();
-    });
-    
-    // Tab event listeners
-    tabBtns.forEach(btn => {
-        btn.addEventListener('click', switchTab);
-    });
-    
-    // Initialize video and features
-    initVideo();
-    setupTranscriptInteraction();
-    
-    // Fix for mobile devices
-    if ('ontouchstart' in window) {
-        videoContainer.addEventListener('touchstart', function() {
-            if (videoElement.paused) {
-                videoElement.play();
-                playPauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+    highlightCurrentTranscript(currentTime) {
+        const entries = this.content.transcript.querySelectorAll('.transcript-entry');
+        entries.forEach(entry => {
+            const start = parseFloat(entry.dataset.start);
+            const end = parseFloat(entry.dataset.end);
+            
+            if (currentTime >= start && currentTime <= end) {
+                entry.classList.add('active');
+                entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
             } else {
-                videoElement.pause();
-                playPauseBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+                entry.classList.remove('active');
             }
         });
     }
-});
+    
+    switchTab(selectedTab) {
+        // Remove active class from all tabs and panes
+        this.content.tabs.forEach(tab => tab.classList.remove('active'));
+        this.content.panes.forEach(pane => pane.classList.remove('active'));
+        
+        // Add active class to selected tab and pane
+        selectedTab.classList.add('active');
+        const paneId = selectedTab.dataset.tab;
+        document.getElementById(paneId).classList.add('active');
+    }
+}
+
+// Helper functions
+function formatTime(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+function getLanguageName(code) {
+    const languages = {
+        'en': 'English',
+        'es': 'Spanish',
+        'fr': 'French',
+        'de': 'German',
+        'zh': 'Chinese',
+        'ja': 'Japanese',
+        'ko': 'Korean',
+        'ru': 'Russian',
+        'ar': 'Arabic',
+        'hi': 'Hindi'
+    };
+    return languages[code] || code;
+}

@@ -1,94 +1,171 @@
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import MarianMTModel, MarianTokenizer
 import torch
-from typing import Dict, Optional
+import logging
+import time
+from typing import Dict, List
+from utils.cache import update_processing_status
 
-# Cache the model and tokenizers to avoid reloading
-model = None
-tokenizer = None
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Map of language codes to NLLB language codes
-LANGUAGE_CODE_MAP = {
-    "en": "eng_Latn",
-    "ko": "kor_Latn",
-    "zh": "zho_Hans",
-    "fr": "fra_Latn",
-    "es": "spa_Latn",
-    "de": "deu_Latn",
-    "it": "ita_Latn",
-    "ja": "jpn_Jpan",
-    "ru": "rus_Cyrl",
-    "pt": "por_Latn",
-    "ar": "ara_Arab"
-    # Add more languages as needed
-}
+# Cache for loaded models
+model_cache: Dict[str, tuple[MarianMTModel, MarianTokenizer]] = {}
 
-def load_nllb_model():
-    """Load the NLLB-200 translation model if not already loaded"""
-    global model, tokenizer
+def get_model_name(target_lang: str) -> str:
+    """Get the appropriate model name for the target language."""
+    lang_to_model = {
+        'es': 'Helsinki-NLP/opus-mt-en-es',
+        'fr': 'Helsinki-NLP/opus-mt-en-fr',
+        'de': 'Helsinki-NLP/opus-mt-en-de',
+        'zh': 'Helsinki-NLP/opus-mt-en-zh',
+        'ja': 'Helsinki-NLP/opus-mt-en-jap',
+        'ko': 'Helsinki-NLP/opus-mt-en-ko',
+        'ru': 'Helsinki-NLP/opus-mt-en-ru',
+        'ar': 'Helsinki-NLP/opus-mt-en-ar',
+        'hi': 'Helsinki-NLP/opus-mt-en-hi'
+    }
+    return lang_to_model.get(target_lang, 'Helsinki-NLP/opus-mt-en-ROMANCE')
+
+def load_translation_model(target_lang: str, upload_id: str = None) -> tuple[MarianMTModel, MarianTokenizer]:
+    """Load translation model with detailed logging."""
+    model_name = get_model_name(target_lang)
     
-    if model is None or tokenizer is None:
-        # We use the distilled 600M parameter model which is faster and more memory-efficient
-        model_name = "facebook/nllb-200-distilled-600M"
-        
-        # Check if CUDA is available
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Load model and tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
+    # Check cache first
+    if model_name in model_cache:
+        logger.info(f"[{upload_id}] Using cached translation model for {target_lang}")
+        return model_cache[model_name]
     
-    return model, tokenizer
-
-def translate_text(text: str, source_lang: str = "en", target_lang: str = "ko") -> str:
-    """
-    Translate text using NLLB-200 model
-    
-    Args:
-        text: Text to translate
-        source_lang: Source language code (ISO 639-1)
-        target_lang: Target language code (ISO 639-1)
-        
-    Returns:
-        Translated text string
-    """
     try:
-        # Map language codes to NLLB format
-        source_nllb = LANGUAGE_CODE_MAP.get(source_lang, "eng_Latn")
-        target_nllb = LANGUAGE_CODE_MAP.get(target_lang, "eng_Latn")
+        start_time = time.time()
+        logger.info(f"[{upload_id}] Loading translation model for {target_lang} ({model_name})")
         
-        # Return original text if source and target are the same
-        if source_lang == target_lang:
-            return text
+        # Log CUDA status
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"[{upload_id}] Using device: {device}")
+        if device == "cuda":
+            logger.info(f"[{upload_id}] CUDA Device: {torch.cuda.get_device_name(0)}")
+            logger.info(f"[{upload_id}] Available VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         
-        # Load model and tokenizer
-        model, tokenizer = load_nllb_model()
+        # Load tokenizer and model
+        tokenizer_start = time.time()
+        tokenizer = MarianTokenizer.from_pretrained(model_name)
+        tokenizer_time = time.time() - tokenizer_start
+        logger.info(f"[{upload_id}] Tokenizer loaded in {tokenizer_time:.2f} seconds")
         
-        # Truncate text if it's too long
-        max_input_length = 512
-        if len(text.split()) > max_input_length:
-            text = ' '.join(text.split()[:max_input_length])
+        model_start = time.time()
+        model = MarianMTModel.from_pretrained(model_name).to(device)
+        model_time = time.time() - model_start
+        logger.info(f"[{upload_id}] Model loaded in {model_time:.2f} seconds")
         
-        # Tokenize input text
-        inputs = tokenizer(text, return_tensors="pt")
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        # Cache the loaded model
+        model_cache[model_name] = (model, tokenizer)
         
-        # Set the language token
-        inputs["forced_bos_token_id"] = tokenizer.lang_code_to_id[target_nllb]
+        total_time = time.time() - start_time
+        logger.info(f"[{upload_id}] Translation model setup completed in {total_time:.2f} seconds")
         
-        # Generate translation
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_length=512,
-                num_beams=5,
-                early_stopping=True
-            )
-        
-        # Decode and return translation
-        translation = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        return translation
+        return model, tokenizer
         
     except Exception as e:
-        print(f"Error in translation: {str(e)}")
-        return f"Translation failed: {str(e)}"
+        error_msg = f"Failed to load translation model: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        raise Exception(error_msg)
+
+def translate_text(text: str, target_lang: str, upload_id: str = None, 
+                  segment_index: int = None, total_segments: int = None) -> str:
+    """Translate text with detailed logging and progress updates."""
+    try:
+        # Load model
+        model, tokenizer = load_translation_model(target_lang, upload_id)
+        
+        # Log translation attempt
+        start_time = time.time()
+        text_length = len(text)
+        logger.info(f"[{upload_id}] Translating text to {target_lang} (length: {text_length} chars)")
+        
+        if segment_index is not None and total_segments is not None:
+            progress_msg = f"Translating segment {segment_index}/{total_segments} to {target_lang}"
+            logger.info(f"[{upload_id}] {progress_msg}")
+            if upload_id:
+                progress = 50 + ((segment_index / total_segments) * 40)
+                update_processing_status(
+                    upload_id=upload_id,
+                    status="processing",
+                    progress=progress,
+                    message=progress_msg
+                )
+        
+        # Encode and translate
+        device = next(model.parameters()).device
+        inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        input_ids = inputs["input_ids"].to(device)
+        
+        # Generate translation
+        outputs = model.generate(input_ids, max_length=512, num_beams=4, length_penalty=0.6)
+        translated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Log completion
+        translation_time = time.time() - start_time
+        output_length = len(translated_text)
+        chars_per_second = text_length / translation_time
+        
+        logger.info(f"[{upload_id}] Translation completed:")
+        logger.info(f"[{upload_id}] - Time taken: {translation_time:.2f} seconds")
+        logger.info(f"[{upload_id}] - Input length: {text_length} chars")
+        logger.info(f"[{upload_id}] - Output length: {output_length} chars")
+        logger.info(f"[{upload_id}] - Speed: {chars_per_second:.2f} chars/second")
+        
+        return translated_text
+        
+    except Exception as e:
+        error_msg = f"Translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="error",
+                progress=0,
+                message=error_msg
+            )
+        raise Exception(error_msg)
+
+def batch_translate(texts: List[str], target_lang: str, upload_id: str = None) -> List[str]:
+    """Batch translate multiple texts with progress tracking."""
+    try:
+        total_texts = len(texts)
+        logger.info(f"[{upload_id}] Starting batch translation of {total_texts} texts to {target_lang}")
+        start_time = time.time()
+        
+        translated_texts = []
+        for i, text in enumerate(texts, 1):
+            translated = translate_text(
+                text, 
+                target_lang, 
+                upload_id=upload_id,
+                segment_index=i,
+                total_segments=total_texts
+            )
+            translated_texts.append(translated)
+            
+            if i % 10 == 0:
+                logger.info(f"[{upload_id}] Translated {i}/{total_texts} segments")
+        
+        total_time = time.time() - start_time
+        avg_time = total_time / total_texts
+        logger.info(f"[{upload_id}] Batch translation completed:")
+        logger.info(f"[{upload_id}] - Total time: {total_time:.2f} seconds")
+        logger.info(f"[{upload_id}] - Average time per text: {avg_time:.2f} seconds")
+        
+        return translated_texts
+        
+    except Exception as e:
+        error_msg = f"Batch translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="error",
+                progress=0,
+                message=error_msg
+            )
+        raise Exception(error_msg)
