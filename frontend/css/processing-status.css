@@ -1,0 +1,209 @@
+.processing-status-container {
+    max-width: 350px;
+    margin: 0;
+    padding: 1.5rem;
+    background-color: rgba(30, 30, 38, 0.95);
+    border-radius: 10px;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.25);
+    transition: all 0.3s ease;
+    position: fixed;
+    right: 2rem;
+    top: 120px;
+    z-index: 1000;
+    color: #fff;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(120, 120, 150, 0.2);
+}
+
+.processing-status-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.processing-status-header i {
+    font-size: 1.8rem;
+    margin-right: 1rem;
+    color: #7e6cfe;
+}
+
+.processing-status-header h3 {
+    font-size: 1.4rem;
+    margin: 0;
+    font-weight: 600;
+    color: #fff;
+}
+
+.processing-progress {
+    height: 8px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+    position: relative;
+}
+
+.processing-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #7e6cfe, #6cdbfe);
+    border-radius: 5px;
+    transition: width 0.5s ease;
+}
+
+.processing-stages {
+    max-height: 300px;
+    overflow-y: auto;
+    margin-right: -10px;
+    padding-right: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(126, 108, 254, 0.5) rgba(30, 30, 38, 0.5);
+}
+
+.processing-stages::-webkit-scrollbar {
+    width: 6px;
+}
+
+.processing-stages::-webkit-scrollbar-track {
+    background: rgba(30, 30, 38, 0.5);
+    border-radius: 3px;
+}
+
+.processing-stages::-webkit-scrollbar-thumb {
+    background-color: rgba(126, 108, 254, 0.5);
+    border-radius: 3px;
+}
+
+.processing-stage {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.05);
+    transition: all 0.3s ease;
+}
+
+.processing-stage.active {
+    background-color: rgba(126, 108, 254, 0.15);
+    border-left: 4px solid #7e6cfe;
+}
+
+.processing-stage.completed {
+    background-color: rgba(108, 219, 254, 0.1);
+    border-left: 4px solid #6cdbfe;
+}
+
+.stage-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background-color: rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 1rem;
+    font-size: 0.8rem;
+}
+
+.active .stage-icon {
+    background-color: #7e6cfe;
+    color: white;
+}
+
+.completed .stage-icon {
+    background-color: #6cdbfe;
+    color: white;
+}
+
+.stage-details {
+    flex: 1;
+}
+
+.stage-name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: #fff;
+    font-size: 0.9rem;
+}
+
+.stage-description {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.7);
+    margin: 0;
+}
+
+.stage-time {
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 0.25rem;
+}
+
+.processing-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.processing-elapsed {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.8rem;
+}
+
+.processing-message {
+    color: #fff;
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+/* Special states */
+.processing-status-container.completed {
+    border: 1px solid rgba(108, 219, 254, 0.4);
+}
+
+.processing-status-container.failed {
+    border: 1px solid rgba(255, 87, 87, 0.4);
+}
+
+.failed .processing-status-header i {
+    color: #ff5757;
+}
+
+.completed .processing-status-header i {
+    color: #6cdbfe;
+}
+
+/* Close button */
+.processing-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.processing-close:hover {
+    color: #fff;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .processing-status-container {
+        right: 1rem;
+        left: 1rem;
+        max-width: none;
+        width: auto;
+    }
+    
+    .processing-status-header h3 {
+        font-size: 1.2rem;
+    }
+    
+    .stage-name {
+        font-size: 0.85rem;
+    }
+}

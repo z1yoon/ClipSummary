@@ -89,7 +89,7 @@
                     const token = localStorage.getItem('access_token');
                     const type = localStorage.getItem('token_type');
                     
-                    const response = await fetch('/api/auth/my-videos', {
+                    const response = await fetch('/api/videos/user/videos', {
                         headers: {
                             'Authorization': `${type} ${token}`
                         }

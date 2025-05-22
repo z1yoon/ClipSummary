@@ -426,88 +426,167 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showProcessingStatus(data) {
-        // Use inline processing status bar instead of popup overlay
-        const inlineStatus = document.querySelector('.inline-processing-status');
-        const inlineProgressFill = inlineStatus.querySelector('.inline-progress-fill');
-        const inlineStatusText = inlineStatus.querySelector('.inline-status-text');
-        
-        // Format the progress percentage
-        const progressPercent = Math.round(data.progress);
-        
-        // Determine status message and icons
-        let statusMessage = data.message || '';
-        let stageInfo = '';
-        
-        if (data.status === 'uploading') {
-            statusMessage = `Uploading: ${progressPercent}% complete...`;
-        } else if (data.status === 'processing') {
-            // Add current stage info if available
-            if (data.stageElapsedSeconds) {
-                stageInfo = `<span class="inline-status-stage">${formatTime(data.stageElapsedSeconds)}</span>`;
-            }
-        }
-        
-        // Show the inline status bar
-        inlineStatus.style.display = 'flex';
+        // Show the detailed processing status component
+        const detailedStatusElement = document.getElementById('detailed-processing-status');
+        detailedStatusElement.style.display = 'block';
         
         // Update progress bar
-        inlineProgressFill.style.width = `${progressPercent}%`;
+        const progressBar = detailedStatusElement.querySelector('.processing-progress-bar');
+        const progressPercent = Math.round(data.progress);
+        progressBar.style.width = `${progressPercent}%`;
         
-        // Update status text
-        inlineStatusText.innerHTML = `${statusMessage} ${stageInfo}`;
-        
-        // Handle completed processing
-        if (data.status === 'completed') {
-            inlineProgressFill.style.width = '100%';
-            inlineStatusText.textContent = 'Processing completed successfully!';
-            
-            // Wait a moment before redirecting
-            setTimeout(() => {
-                const uploadId = data.upload_id || getUploadIdFromResponse(data);
-                if (uploadId) {
-                    window.location.href = `/video.html?id=${uploadId}`;
-                }
-            }, 1500);
-        } 
-        // Handle failed processing
-        else if (data.status === 'failed') {
-            inlineStatus.style.backgroundColor = 'rgba(220, 53, 69, 0.85)'; // Error background
-            inlineStatusText.textContent = data.message || 'Processing failed';
+        // Update elapsed time
+        const elapsedTimeElement = detailedStatusElement.querySelector('.processing-elapsed');
+        if (data.elapsedTime) {
+            elapsedTimeElement.textContent = `Elapsed time: ${data.elapsedTime}`;
         }
-    }
-    
-    // Helper function to extract upload ID from response
-    function getUploadIdFromResponse(data) {
-        if (data.upload_id) return data.upload_id;
-        if (data.video_id) return data.video_id;
-        return null;
-    }
-    
-    function hideProcessingStatus() {
+        
+        // Update status message
+        const messageElement = detailedStatusElement.querySelector('.processing-message');
+        messageElement.textContent = data.message || 'Processing your video...';
+        
+        // Update container class based on status
+        const container = detailedStatusElement.querySelector('.processing-status-container');
+        container.classList.remove('completed', 'failed');
+        if (data.status === 'completed') {
+            container.classList.add('completed');
+        } else if (data.status === 'failed') {
+            container.classList.add('failed');
+        }
+        
+        // Update header icon and text based on status
+        const headerIcon = detailedStatusElement.querySelector('.processing-status-header i');
+        const headerText = detailedStatusElement.querySelector('.processing-status-header h3');
+        
+        headerIcon.className = ''; // Reset icon classes
+        if (data.status === 'completed') {
+            headerIcon.className = 'fas fa-check-circle';
+            headerText.textContent = 'Processing Complete';
+        } else if (data.status === 'failed') {
+            headerIcon.className = 'fas fa-exclamation-circle';
+            headerText.textContent = 'Processing Failed';
+        } else {
+            headerIcon.className = 'fas fa-cog fa-spin';
+            headerText.textContent = 'Processing Your Video';
+        }
+        
+        // Update stages based on message content
+        updateProcessingStages(data);
+        
+        // Also keep the simple inline status for compatibility
         const inlineStatus = document.querySelector('.inline-processing-status');
         if (inlineStatus) {
-            inlineStatus.style.display = 'none';
-            const inlineProgressFill = inlineStatus.querySelector('.inline-progress-fill');
-            if (inlineProgressFill) {
-                inlineProgressFill.style.width = '0%';
-            }
+            inlineStatus.style.display = 'none'; // Hide the simple status when using detailed view
         }
     }
-
+    
+    function updateProcessingStages(data) {
+        // Reset all stages first
+        const allStages = document.querySelectorAll('.processing-stage');
+        allStages.forEach(stage => {
+            stage.classList.remove('active', 'completed');
+        });
+        
+        let currentStage = '';
+        let currentMessage = (data.message || '').toLowerCase();
+        
+        // Determine current stage based on message content
+        if (currentMessage.includes('upload')) {
+            currentStage = 'upload';
+        } else if (currentMessage.includes('extract') || currentMessage.includes('audio')) {
+            currentStage = 'audio';
+        } else if (currentMessage.includes('transcrib') || currentMessage.includes('speech') || 
+                  currentMessage.includes('whisper') || currentMessage.includes('convert')) {
+            currentStage = 'transcribe';
+        } else if (currentMessage.includes('align') || currentMessage.includes('text processing')) {
+            currentStage = 'align';
+        } else if (currentMessage.includes('speaker') || currentMessage.includes('diariz')) {
+            currentStage = 'speaker';
+        } else if (currentMessage.includes('summary') || currentMessage.includes('generat')) {
+            currentStage = 'summary';
+        }
+        
+        // Calculate which stages are active and completed based on progress
+        const progress = data.progress || 0;
+        const progressThresholds = {
+            'upload': 15,
+            'audio': 30,
+            'transcribe': 50,
+            'align': 70,
+            'speaker': 85,
+            'summary': 95
+        };
+        
+        // Mark stages as completed or active
+        Object.entries(progressThresholds).forEach(([stage, threshold]) => {
+            const stageElement = document.querySelector(`.processing-stage[data-stage="${stage}"]`);
+            if (!stageElement) return;
+            
+            // If progress is past this stage's threshold, mark as completed
+            if (progress >= threshold) {
+                stageElement.classList.add('completed');
+                
+                // Add elapsed time if available
+                if (stage === currentStage && data.stageElapsedSeconds) {
+                    const timeElement = stageElement.querySelector('.stage-time');
+                    timeElement.textContent = `Time elapsed: ${formatTime(data.stageElapsedSeconds)}`;
+                }
+            } 
+            // If this is the current active stage
+            else if (stage === currentStage) {
+                stageElement.classList.add('active');
+                
+                // Add elapsed time if available
+                if (data.stageElapsedSeconds) {
+                    const timeElement = stageElement.querySelector('.stage-time');
+                    timeElement.textContent = `Time elapsed: ${formatTime(data.stageElapsedSeconds)}`;
+                }
+            }
+        });
+    }
+    
+    // Show error with detailed UI
     function showError(message) {
+        const detailedStatusElement = document.getElementById('detailed-processing-status');
+        if (detailedStatusElement) {
+            detailedStatusElement.style.display = 'block';
+            
+            const container = detailedStatusElement.querySelector('.processing-status-container');
+            container.classList.add('failed');
+            
+            const headerIcon = detailedStatusElement.querySelector('.processing-status-header i');
+            headerIcon.className = 'fas fa-exclamation-circle';
+            
+            const headerText = detailedStatusElement.querySelector('.processing-status-header h3');
+            headerText.textContent = 'Processing Failed';
+            
+            const messageElement = detailedStatusElement.querySelector('.processing-message');
+            messageElement.textContent = message || 'An error occurred during processing.';
+            
+            // Hide the progress stages
+            const stages = detailedStatusElement.querySelector('.processing-stages');
+            if (stages) {
+                stages.style.display = 'none';
+            }
+        }
+        
+        // Also show in inline status for compatibility
         const inlineStatus = document.querySelector('.inline-processing-status');
-        const inlineStatusText = inlineStatus.querySelector('.inline-status-text');
-        
-        // Display error in inline status
-        inlineStatus.style.display = 'flex';
-        inlineStatus.style.backgroundColor = 'rgba(220, 53, 69, 0.85)'; // Error background
-        inlineStatusText.textContent = message;
-        
-        // Reset after a delay
-        setTimeout(() => {
-            inlineStatus.style.backgroundColor = '';
-            inlineStatus.style.display = 'none';
-        }, 5000);
+        if (inlineStatus) {
+            inlineStatus.style.display = 'flex';
+            inlineStatus.style.backgroundColor = 'rgba(220, 53, 69, 0.85)';
+            
+            const inlineStatusText = inlineStatus.querySelector('.inline-status-text');
+            if (inlineStatusText) {
+                inlineStatusText.textContent = message || 'Processing failed';
+            }
+            
+            // Reset after a delay
+            setTimeout(() => {
+                inlineStatus.style.backgroundColor = '';
+                inlineStatus.style.display = 'none';
+            }, 5000);
+        }
     }
 
     function formatTime(seconds) {
@@ -738,4 +817,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // Run on load and resize
     adjustForScreenSize();
     window.addEventListener('resize', adjustForScreenSize);
+
+    // Add event listener for the close button on processing status
+    const closeProcessingButton = document.getElementById('close-processing-status');
+    if (closeProcessingButton) {
+        closeProcessingButton.addEventListener('click', function() {
+            const processingStatus = document.getElementById('detailed-processing-status');
+            if (processingStatus) {
+                processingStatus.style.display = 'none';
+            }
+        });
+    }
 });

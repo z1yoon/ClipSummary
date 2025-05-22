@@ -287,6 +287,12 @@ async def list_user_videos(
 ):
     """List all videos uploaded by the current user"""
     try:
+        # Check cache first for faster response
+        cache_key = f"user_videos:{current_user['id']}:{skip}:{limit}"
+        cached_result = get_cached_result(cache_key)
+        if cached_result:
+            return cached_result
+            
         # Get videos from database
         import sqlite3
         
@@ -301,31 +307,46 @@ async def list_user_videos(
         )
         
         videos = []
+        upload_ids = []
         for row in cursor.fetchall():
             video_data = dict(row)
-            
-            # Add thumbnail and additional metadata if available
-            info_path = f"uploads/{video_data['upload_id']}/info.json"
+            videos.append(video_data)
+            upload_ids.append(video_data['upload_id'])
+        
+        conn.close()
+        
+        # Bulk load metadata for all videos at once (more efficient)
+        thumbnail_data = {}
+        for upload_id in upload_ids:
+            info_path = f"uploads/{upload_id}/info.json"
             if os.path.exists(info_path):
                 try:
                     with open(info_path, "r") as f:
                         info = json.load(f)
                     
-                    video_data["thumbnail"] = info.get("thumbnail")
-                    video_data["duration"] = info.get("duration", 0)
+                    thumbnail_data[upload_id] = {
+                        "thumbnail": info.get("thumbnail"),
+                        "duration": info.get("duration", 0)
+                    }
                 except Exception as e:
-                    print(f"Error loading info for video {video_data['upload_id']}: {str(e)}")
-            
-            videos.append(video_data)
+                    print(f"Error loading info for video {upload_id}: {str(e)}")
         
-        conn.close()
+        # Add metadata to video objects
+        for video in videos:
+            if video['upload_id'] in thumbnail_data:
+                video.update(thumbnail_data[video['upload_id']])
         
-        return {
+        result = {
             "videos": videos,
             "count": len(videos),
             "skip": skip,
             "limit": limit
         }
+        
+        # Cache the result for 5 minutes (adjust TTL as needed)
+        cache_result(cache_key, result, ttl=300)
+        
+        return result
         
     except Exception as e:
         raise HTTPException(
