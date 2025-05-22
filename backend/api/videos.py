@@ -278,3 +278,57 @@ async def get_video_summary(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving summary: {str(e)}"
         )
+
+@router.get("/user/videos")
+async def list_user_videos(
+    current_user: dict = Depends(get_current_user),
+    skip: int = Query(0, description="Skip the first N videos"),
+    limit: int = Query(20, description="Limit the number of videos returned")
+):
+    """List all videos uploaded by the current user"""
+    try:
+        # Get videos from database
+        import sqlite3
+        
+        conn = sqlite3.connect("clipsummary.db")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Query videos for the current user, ordered by most recent first
+        cursor.execute(
+            "SELECT id, upload_id, title, filename, status, created_at FROM videos WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (current_user["id"], limit, skip)
+        )
+        
+        videos = []
+        for row in cursor.fetchall():
+            video_data = dict(row)
+            
+            # Add thumbnail and additional metadata if available
+            info_path = f"uploads/{video_data['upload_id']}/info.json"
+            if os.path.exists(info_path):
+                try:
+                    with open(info_path, "r") as f:
+                        info = json.load(f)
+                    
+                    video_data["thumbnail"] = info.get("thumbnail")
+                    video_data["duration"] = info.get("duration", 0)
+                except Exception as e:
+                    print(f"Error loading info for video {video_data['upload_id']}: {str(e)}")
+            
+            videos.append(video_data)
+        
+        conn.close()
+        
+        return {
+            "videos": videos,
+            "count": len(videos),
+            "skip": skip,
+            "limit": limit
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving videos: {str(e)}"
+        )

@@ -7,11 +7,14 @@ from typing import Optional
 import sqlite3
 import uuid
 from pydantic import BaseModel
+import os
+import json
 
 # Constants
 SECRET_KEY = "0d6913c5c949a24c8da877cc80eaeff0f0bf1428e4294194a9c898e376ceb2f1" # In a real app, store this in an env var
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # Extended to 7 days for better user experience
+REFRESH_TOKEN_EXPIRE_DAYS = 30  # 30 days for refresh token
 
 # Setup password hashing and OAuth2
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -166,6 +169,10 @@ class SignupRequest(BaseModel):
     email: str
     password: str
 
+# Add this model for token refresh
+class TokenRefresh(BaseModel):
+    token: str
+
 # API Endpoints
 @router.post("/signup")
 async def signup(request: SignupRequest):
@@ -217,6 +224,42 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     
     return {"access_token": access_token, "token_type": "bearer"}
 
+@router.post("/refresh-token")
+async def refresh_token(request: TokenRefresh):
+    """Refresh an authentication token before it expires"""
+    try:
+        # Verify the current token is valid
+        payload = jwt.decode(request.token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        # Get user to ensure they still exist
+        user = get_user(username)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+            
+        # Generate a new token with fresh expiration
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": username}, expires_delta=access_token_expires
+        )
+        
+        return {"access_token": access_token, "token_type": "bearer"}
+        
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
 @router.get("/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
     return current_user
@@ -232,7 +275,43 @@ async def get_my_videos(current_user: dict = Depends(get_current_user)):
         (current_user["id"],)
     )
     
-    videos = [dict(row) for row in cursor.fetchall()]
+    videos = []
+    for row in cursor.fetchall():
+        video_data = dict(row)
+        
+        # Add thumbnail and additional metadata if available
+        info_path = f"uploads/{video_data['upload_id']}/info.json"
+        if os.path.exists(info_path):
+            try:
+                with open(info_path, "r") as f:
+                    info = json.load(f)
+                
+                video_data["thumbnail"] = info.get("thumbnail")
+                video_data["duration"] = info.get("duration", 0)
+                
+                # If title is empty in DB but exists in info, use that
+                if (not video_data["title"] or video_data["title"] == "Untitled") and info.get("title"):
+                    video_data["title"] = info["title"]
+                
+                # Check status from status.json if available
+                status_path = f"uploads/{video_data['upload_id']}/status.json"
+                if os.path.exists(status_path):
+                    try:
+                        with open(status_path, "r") as f:
+                            status_data = json.load(f)
+                            # Update status if it's more current than what's in the DB
+                            if status_data.get("status") == "completed" and video_data["status"] != "completed":
+                                video_data["status"] = "completed"
+                            elif status_data.get("status") == "failed" and video_data["status"] != "failed":
+                                video_data["status"] = "failed"
+                                video_data["error_message"] = status_data.get("message", "")
+                    except:
+                        pass  # Ignore errors reading status file
+            except Exception as e:
+                print(f"Error loading info for video {video_data['upload_id']}: {str(e)}")
+        
+        videos.append(video_data)
+    
     conn.close()
     
     return {"videos": videos}

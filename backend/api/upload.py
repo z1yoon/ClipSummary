@@ -8,15 +8,132 @@ import time
 import subprocess
 from typing import List, Optional
 import sqlite3
+import threading
+import logging
 
 # Change relative imports to absolute imports
-from ai.whisperx import transcribe_audio
+from ai.whisperx import transcribe_audio, load_models, asr_model, is_model_loading, wait_for_model
 from ai.summarizer import generate_summary
 from ai.translator import translate_text
 from utils.cache import cache_result, get_cached_result, get_redis_client
 from api.auth import get_current_user
 
 router = APIRouter()
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
+
+# Global variable to track model loading state
+whisperx_loading_state = {
+    "is_loading": False,
+    "progress": 0,
+    "message": "",
+    "start_time": None,
+    "completed": False,
+    "error": None
+}
+
+def update_loading_status(progress, message):
+    """Update the global WhisperX loading status"""
+    global whisperx_loading_state
+    whisperx_loading_state["progress"] = progress
+    whisperx_loading_state["message"] = message
+    logger.info(f"WhisperX loading: {progress}% - {message}")
+
+def background_load_whisperx():
+    """Load WhisperX in a background thread with progress updates"""
+    global whisperx_loading_state
+    
+    # Mark as loading
+    whisperx_loading_state["is_loading"] = True
+    whisperx_loading_state["start_time"] = time.time()
+    whisperx_loading_state["completed"] = False
+    whisperx_loading_state["error"] = None
+    
+    try:
+        # Initialize loading with progress updates
+        update_loading_status(5, "Initializing WhisperX model loading...")
+        time.sleep(1)  # Give time for UI to update
+        
+        update_loading_status(10, "Preparing model resources...")
+        time.sleep(1)
+        
+        # Actual model loading happens here
+        update_loading_status(15, "Loading WhisperX ASR model (large-v2)...")
+        
+        # Check if model is already being loaded or loaded
+        if is_model_loading():
+            logger.info("WhisperX model is already being loaded by another thread, waiting for completion...")
+            update_loading_status(20, "Waiting for model to complete loading in another process...")
+            
+            # Wait for the loading to complete
+            if wait_for_model(timeout=300):  # Wait up to 5 minutes
+                update_loading_status(100, "Model loading completed by another process")
+                whisperx_loading_state["completed"] = True
+            else:
+                raise Exception("Timed out waiting for model to load in another process")
+        else:
+            # This will trigger the progress reporter in the load_models function
+            load_models()
+        
+        # Model loaded successfully
+        elapsed = time.time() - whisperx_loading_state["start_time"]
+        update_loading_status(100, f"WhisperX model loaded successfully in {elapsed:.1f}s")
+        whisperx_loading_state["completed"] = True
+        
+    except Exception as e:
+        error_msg = f"Error loading WhisperX model: {str(e)}"
+        whisperx_loading_state["error"] = error_msg
+        logger.error(error_msg, exc_info=True)
+    finally:
+        whisperx_loading_state["is_loading"] = False
+
+def ensure_whisperx_loaded():
+    """Ensure WhisperX model is loaded, start loading if needed"""
+    # Check if model is already loaded
+    if asr_model is not None:
+        return True
+    
+    global whisperx_loading_state
+    
+    # If model is being loaded by another thread, don't start a new loading thread
+    if is_model_loading():
+        logger.info("WhisperX model is already being loaded by another thread")
+        return False
+        
+    # If not already loading, start background loading
+    if not whisperx_loading_state["is_loading"] and not whisperx_loading_state["completed"]:
+        logger.info("Starting WhisperX model loading in background thread")
+        loading_thread = threading.Thread(target=background_load_whisperx)
+        loading_thread.daemon = True
+        loading_thread.start()
+    
+    return False  # Model not yet loaded
+
+@router.get("/whisperx-status")
+async def get_whisperx_loading_status():
+    """Get the current status of WhisperX model loading"""
+    global whisperx_loading_state
+    
+    # Check if model is already loaded via direct inspection
+    if asr_model is not None and not whisperx_loading_state["completed"]:
+        whisperx_loading_state["completed"] = True
+        whisperx_loading_state["progress"] = 100
+        whisperx_loading_state["message"] = "WhisperX model is loaded and ready"
+    
+    # Calculate elapsed time if loading
+    elapsed = None
+    if whisperx_loading_state["start_time"] and whisperx_loading_state["is_loading"]:
+        elapsed = time.time() - whisperx_loading_state["start_time"]
+    
+    return {
+        "is_loading": whisperx_loading_state["is_loading"],
+        "progress": whisperx_loading_state["progress"],
+        "message": whisperx_loading_state["message"],
+        "completed": whisperx_loading_state["completed"],
+        "error": whisperx_loading_state["error"],
+        "elapsed_seconds": elapsed
+    }
 
 # Processing status tracking with Redis
 def update_processing_status(upload_id: str, status: str, progress: float = 0, message: str = ""):
@@ -105,6 +222,39 @@ async def upload_video(
                 detail=f"Error saving file: {str(e)}"
             )
         
+        # Extract metadata and thumbnail immediately
+        video_info = {
+            "filename": file.filename,
+            "upload_time": time.time(),
+            "languages_requested": languages.split(","),
+            "summary_length": summary_length,
+            "user_id": current_user["id"],
+            "user_name": current_user["username"],
+            "processing_state": "metadata_only",  # Flag to indicate only metadata is available
+        }
+        
+        # Extract video thumbnail and basic metadata synchronously
+        try:
+            from utils.helpers import get_video_metadata, extract_thumbnail
+            
+            # Get basic metadata (quick)
+            metadata = get_video_metadata(file_path)
+            
+            # Extract thumbnail
+            thumbnail_path = f"{upload_dir}/thumbnail.jpg"
+            extract_thumbnail(file_path, thumbnail_path)
+            
+            # Add thumbnail and metadata to video_info
+            video_info.update({
+                "thumbnail": f"/uploads/{upload_id}/thumbnail.jpg",
+                "duration": metadata.get("duration", 0),
+                "title": file.filename,
+                "metadata": metadata
+            })
+        except Exception as e:
+            print(f"Error extracting initial metadata: {str(e)}")
+            # Continue even if metadata extraction fails
+        
         # Save video record to database
         try:
             conn = sqlite3.connect("clipsummary.db")
@@ -113,62 +263,145 @@ async def upload_video(
             cursor.execute(
                 """INSERT INTO videos (id, user_id, title, filename, upload_id, status, is_youtube) 
                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (video_id, current_user["id"], file.filename, file.filename, upload_id, "processing", False)
+                (video_id, current_user["id"], file.filename, file.filename, upload_id, "metadata_ready", False)
             )
             conn.commit()
             conn.close()
+            video_info["video_id"] = video_id
         except Exception as e:
             print(f"Error saving to database: {str(e)}")
         
-        # Parse languages from form data
-        language_list = languages.split(",")
+        # Save video info
+        with open(f"{upload_dir}/info.json", "w") as f:
+            json.dump(video_info, f)
+        
+        # Cache metadata for immediate access
+        cache_result(f"video:{upload_id}:info", video_info)
+        
+        # Create a symlink or copy the video file to make it accessible for streaming
+        video_stream_path = f"uploads/{upload_id}/video.mp4"
+        if not os.path.exists(video_stream_path) or os.path.getsize(video_stream_path) == 0:
+            print(f"[{upload_id}] Creating video stream symlink/copy")
+            try:
+                # If symlink exists but is broken, remove it
+                if os.path.islink(video_stream_path) and not os.path.exists(os.readlink(video_stream_path)):
+                    print(f"[{upload_id}] Removing broken symlink")
+                    os.unlink(video_stream_path)
+                elif os.path.exists(video_stream_path) and os.path.getsize(video_stream_path) == 0:
+                    print(f"[{upload_id}] Removing empty video file")
+                    os.unlink(video_stream_path)
+                
+                # For large files (>1GB), avoid copying and use hard link if possible
+                file_size_gb = os.path.getsize(file_path) / (1024*1024*1024)
+                if file_size_gb > 1:
+                    print(f"[{upload_id}] Large file detected ({file_size_gb:.2f} GB), using hard link if possible")
+                    try:
+                        # Try hard link first (more efficient)
+                        os.link(file_path, video_stream_path)
+                        print(f"[{upload_id}] Hard link created successfully")
+                    except Exception as link_error:
+                        print(f"[{upload_id}] Hard link failed: {str(link_error)}, trying symlink")
+                        try:
+                            # Try symlink as backup
+                            os.symlink(file_path, video_stream_path)
+                            print(f"[{upload_id}] Symlink created successfully")
+                        except Exception as symlink_error:
+                            print(f"[{upload_id}] Symlink failed: {str(symlink_error)}, using chunked copy")
+                            # Fall back to chunked copying for large files
+                            try:
+                                chunk_size = 64 * 1024 * 1024  # 64MB chunks
+                                copied_size = 0
+                                total_size = os.path.getsize(file_path)
+                                
+                                with open(file_path, 'rb') as src, open(video_stream_path, 'wb') as dst:
+                                    # Copy in chunks and report progress
+                                    while True:
+                                        chunk = src.read(chunk_size)
+                                        if not chunk:
+                                            break
+                                        dst.write(chunk)
+                                        dst.flush()
+                                        os.fsync(dst.fileno())  # Ensure data is written to disk
+                                        
+                                        copied_size += len(chunk)
+                                        progress_pct = (copied_size / total_size) * 100
+                                        print(f"[{upload_id}] Copying: {progress_pct:.1f}% complete ({copied_size/(1024*1024):.1f}MB / {total_size/(1024*1024):.1f}MB)")
+                                    
+                                print(f"[{upload_id}] File copy completed successfully")
+                            except Exception as copy_error:
+                                print(f"[{upload_id}] Chunked copy failed: {str(copy_error)}")
+                                raise
+                else:
+                    # For smaller files, use regular symlink or copy
+                    try:
+                        # Try symlink first
+                        os.symlink(file_path, video_stream_path)
+                        print(f"[{upload_id}] Symlink created successfully")
+                    except Exception as symlink_error:
+                        print(f"[{upload_id}] Symlink failed: {str(symlink_error)}, falling back to copy")
+                        # If symlink fails, copy the file
+                        shutil.copy(file_path, video_stream_path)
+                        print(f"[{upload_id}] File copy completed successfully")
+                
+                # Verify the file exists and has content
+                if not os.path.exists(video_stream_path):
+                    raise Exception("Failed to create video.mp4 link or copy - file does not exist")
+                
+                stream_file_size = os.path.getsize(video_stream_path)
+                if stream_file_size == 0:
+                    raise Exception("Failed to create video.mp4 link or copy - file is empty")
+                    
+                print(f"[{upload_id}] Successfully created video.mp4 ({stream_file_size/(1024*1024):.1f} MB)")
+                
+            except Exception as e:
+                detailed_error = f"Error creating video stream file: {str(e)}, Video path exists: {os.path.exists(file_path)}, Video path size: {os.path.getsize(file_path) if os.path.exists(file_path) else 'N/A'}"
+                print(f"[{upload_id}] {detailed_error}")
+                
+                # Check disk space as a possible cause
+                try:
+                    import shutil
+                    disk_usage = shutil.disk_usage(os.path.dirname(video_stream_path))
+                    free_space_gb = disk_usage.free / (1024*1024*1024)
+                    video_size_gb = os.path.getsize(file_path) / (1024*1024*1024) if os.path.exists(file_path) else 0
+                    print(f"[{upload_id}] Free disk space: {free_space_gb:.2f}GB, Video size: {video_size_gb:.2f}GB")
+                    
+                    if free_space_gb < video_size_gb + 1:  # +1GB buffer
+                        raise Exception(f"Insufficient disk space: {free_space_gb:.2f}GB free, need at least {video_size_gb + 1:.2f}GB")
+                except Exception as disk_error:
+                    print(f"[{upload_id}] Error checking disk space: {str(disk_error)}")
+                
+                raise Exception(f"Failed to create video.mp4: {str(e)}")
         
         # Set initial processing status
         update_processing_status(
             upload_id=upload_id,
-            status="processing",
-            progress=0,
-            message="Upload received. Starting processing for large video file."
+            status="metadata_ready",
+            progress=5,
+            message="Video uploaded successfully. Metadata and video preview are available."
         )
         
-        # Process the video in the background
-        if background_tasks:
-            background_tasks.add_task(
-                process_uploaded_video,
-                video_path=file_path,
-                upload_id=upload_id,
-                filename=file.filename,
-                languages=language_list,
-                summary_length=summary_length,
-                user_id=current_user["id"]
-            )
-        
-        # Save basic video info
-        video_info = {
-            "filename": file.filename,
-            "upload_time": time.time(),
-            "languages_requested": language_list,
-            "summary_length": summary_length,
-            "user_id": current_user["id"],
-            "user_name": current_user["username"]
-        }
-        
-        with open(f"{upload_dir}/info.json", "w") as f:
-            json.dump(video_info, f)
-        
-        # Cache initial metadata
-        cache_result(f"video:{upload_id}:info", video_info)
+        # Schedule full processing as a background task (don't make user wait)
+        background_tasks.add_task(
+            process_uploaded_video,
+            video_path=file_path,
+            upload_id=upload_id,
+            filename=file.filename,
+            languages=languages.split(","),
+            summary_length=summary_length,
+            user_id=current_user["id"]
+        )
         
         print(f"Upload processed successfully. ID: {upload_id}")
         
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
             content={
-                "status": "processing",
+                "status": "metadata_ready",
                 "upload_id": upload_id,
                 "filename": file.filename,
-                "message": "Your video is being processed. For long videos, this may take significant time.",
-                "redirectUrl": f"/video.html?id={upload_id}"
+                "metadata": video_info,
+                "message": "Your video is ready for viewing. Transcript and summary will be processed in the background.",
+                "redirectUrl": f"/video.html?id={upload_id}&metadata_only=true"
             }
         )
         
@@ -320,10 +553,41 @@ async def process_uploaded_video(
 ):
     """Background task to process uploaded video."""
     try:
+        # Check if the source video file exists
+        if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+            print(f"[{upload_id}] Source video not found at {video_path}, checking for alternatives")
+            
+            # Try to find any video file in the upload directory
+            upload_dir = f"uploads/{upload_id}"
+            video_files = [f for f in os.listdir(upload_dir) if f.endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov'))]
+            
+            if video_files:
+                # Use the first video file found
+                video_path = os.path.join(upload_dir, video_files[0])
+                print(f"[{upload_id}] Found alternative video: {video_path}")
+            else:
+                raise Exception(f"No video file found in upload directory: {upload_dir}")
+        
         # Get file size for logging
         file_size = os.path.getsize(video_path)
         print(f"[{upload_id}] Starting processing of {filename} ({file_size/1024/1024:.2f} MB)")
 
+        # Create a reference file instead of symlink or copy for large video files
+        video_stream_path = f"uploads/{upload_id}/video.mp4"
+        original_video_path = video_path
+        
+        # Create a video.path reference file that contains the path to the original
+        # This avoids file copying/linking issues in Docker environments
+        reference_path = f"uploads/{upload_id}/video.path"
+        
+        # Save reference to the original file
+        with open(reference_path, "w") as ref_file:
+            ref_file.write(original_video_path)
+            print(f"[{upload_id}] Created reference to original video at: {original_video_path}")
+        
+        # For FFmpeg processing, we'll use the original path directly
+        processing_video_path = original_video_path
+        
         # Update status: starting audio extraction
         update_processing_status(
             upload_id=upload_id,
@@ -338,10 +602,11 @@ async def process_uploaded_video(
         
         try:
             print(f"[{upload_id}] Extracting audio to {audio_path}")
+            
             # Try standard extraction first
             (
                 ffmpeg
-                .input(video_path)
+                .input(processing_video_path)
                 .output(audio_path, acodec='pcm_s16le', ac=1, ar='16k')
                 .run(quiet=False, overwrite_output=True, capture_stderr=True)
             )
@@ -356,7 +621,7 @@ async def process_uploaded_video(
                 print(f"[{upload_id}] Attempting alternative ffmpeg extraction method...")
                 subprocess.run([
                     'ffmpeg',
-                    '-i', video_path,
+                    '-i', processing_video_path,
                     '-vn',  # Disable video
                     '-acodec', 'pcm_s16le',
                     '-ar', '16000',
@@ -370,15 +635,6 @@ async def process_uploaded_video(
                 print(f"[{upload_id}] Alternative extraction also failed: {error_output}")
                 raise Exception(f"Failed to extract audio: {error_output}")
 
-        # Create a symlink or copy the video file to make it accessible for streaming
-        video_stream_path = f"uploads/{upload_id}/video.mp4"
-        if not os.path.exists(video_stream_path):
-            print(f"[{upload_id}] Creating video stream symlink/copy")
-            try:
-                os.symlink(video_path, video_stream_path)
-            except:
-                shutil.copy(video_path, video_stream_path)
-        
         # Verify audio file exists and has content
         if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
             raise Exception("Audio extraction failed: The audio file was not created or is empty")

@@ -3,6 +3,8 @@ import whisperx
 import os
 import time
 import logging
+import gc
+import threading
 from typing import Dict, Any
 from utils.cache import update_processing_status
 
@@ -10,155 +12,275 @@ from utils.cache import update_processing_status
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Cache device and models to avoid reloading
+# Set device and compute type
 device = "cuda" if torch.cuda.is_available() else "cpu"
 compute_type = "float16" if device == "cuda" else "float32"
+
+# Default model size - balance between accuracy and performance
+DEFAULT_MODEL = "medium"
+
+# Get HuggingFace token from environment variables for speaker diarization
+HF_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
+
+# Global variable to store the ASR model once loaded
 asr_model = None
-alignment_model = None
+
+# Track model loading state
+model_loading_lock = threading.Lock()
+model_loading_state = {
+    "is_loading": False,
+    "start_time": None,
+    "progress": 0,
+    "message": ""
+}
+
+if HF_TOKEN:
+    logger.info("HUGGINGFACE_TOKEN found, speaker diarization will be available")
+else:
+    logger.warning("HUGGINGFACE_TOKEN not found, speaker diarization may not work properly")
+
+def is_model_loading():
+    """Check if WhisperX model is currently being loaded"""
+    return model_loading_state["is_loading"]
+
+def wait_for_model(timeout=300):
+    """
+    Wait for the model to be loaded
+    
+    Args:
+        timeout: Maximum time to wait in seconds
+        
+    Returns:
+        bool: True if model was loaded successfully, False if timed out
+    """
+    global asr_model
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        if asr_model is not None:
+            return True
+        if not model_loading_state["is_loading"]:
+            # If not loading and still None, something went wrong
+            return False
+        time.sleep(1)
+    
+    return False  # Timeout
 
 def load_models():
-    """Load models if not already loaded"""
-    global asr_model, alignment_model
-    
-    if asr_model is None:
-        # Load the main ASR model
-        logger.info("Loading WhisperX ASR model...")
-        model_load_start = time.time()
-        asr_model = whisperx.load_model(
-            "large-v2", 
-            device=device, 
-            compute_type=compute_type,
-            language="en"  # Default language, will be auto-detected
-        )
-        model_load_time = time.time() - model_load_start
-        logger.info(f"ASR model loaded in {model_load_time:.2f} seconds")
-    
-    # No need to pre-load alignment model as it's language-specific
-    # and will be loaded based on detected language
-    
-    return asr_model
-
-def transcribe_audio(audio_path: str, upload_id: str = None) -> Dict[str, Any]:
     """
-    Transcribe audio using WhisperX with word-level timestamps and detailed logging
+    Load WhisperX models into memory
+    
+    This function loads the ASR model and sets the global asr_model variable.
+    It uses a lock to prevent multiple threads from loading the model simultaneously.
+    """
+    global asr_model
+    global model_loading_state
+    
+    # If model is already loaded, nothing to do
+    if asr_model is not None:
+        logger.info("WhisperX model is already loaded")
+        return
+    
+    # Use a lock to prevent multiple threads from loading simultaneously
+    acquired = model_loading_lock.acquire(blocking=False)
+    if not acquired:
+        logger.info("Another thread is already loading the WhisperX model")
+        return
+    
+    try:
+        model_loading_state["is_loading"] = True
+        model_loading_state["start_time"] = time.time()
+        model_loading_state["progress"] = 10
+        model_loading_state["message"] = "Starting WhisperX model load"
+        
+        logger.info(f"Loading WhisperX model ({DEFAULT_MODEL}) on {device}...")
+        
+        # Progress updates
+        model_loading_state["progress"] = 20
+        model_loading_state["message"] = "Downloading model files..."
+        
+        # Load the actual model
+        model_loading_state["progress"] = 50
+        model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model..."
+        
+        # Load the model with all required parameters for WhisperX
+        asr_model = whisperx.load_model(
+            DEFAULT_MODEL, 
+            device, 
+            compute_type=compute_type,
+            multilingual=True,
+            max_new_tokens=128,
+            clip_timestamps=True,
+            hallucination_silence_threshold=3.0,
+            hotwords=[]
+        )
+        
+        model_loading_state["progress"] = 100
+        model_loading_state["message"] = "Model loaded successfully"
+        
+        # Log completion
+        total_time = time.time() - model_loading_state["start_time"]
+        logger.info(f"WhisperX model loaded successfully in {total_time:.2f}s")
+        
+    except Exception as e:
+        logger.error(f"Failed to load WhisperX model: {str(e)}")
+        model_loading_state["progress"] = 0
+        model_loading_state["message"] = f"Error: {str(e)}"
+    finally:
+        model_loading_state["is_loading"] = False
+        model_loading_lock.release()
+
+def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = True) -> Dict[str, Any]:
+    """
+    Transcribe audio using WhisperX with word-level timestamps and speaker diarization
     
     Args:
         audio_path: Path to audio file
         upload_id: Optional upload ID for progress tracking
+        diarize: Whether to perform speaker diarization
         
     Returns:
-        Dict containing transcription results with timestamps
+        Dict containing transcription results with timestamps and speaker labels
     """
     try:
         start_time = time.time()
-        logger.info(f"[{upload_id}] Starting WhisperX transcription process")
+        logger.info(f"[{upload_id}] Starting WhisperX transcription")
         
-        # Log CUDA availability
-        cuda_available = torch.cuda.is_available()
+        # Log device info
         logger.info(f"[{upload_id}] Using device: {device}")
-        if cuda_available:
+        if device == "cuda":
             logger.info(f"[{upload_id}] CUDA Device: {torch.cuda.get_device_name(0)}")
-            logger.info(f"[{upload_id}] Available VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
-
-        # Log audio file details
-        audio_size = os.path.getsize(audio_path) / (1024 * 1024)  # Size in MB
-        logger.info(f"[{upload_id}] Audio file size: {audio_size:.2f} MB")
-
+        
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
-                progress=20,
+                progress=10,
                 message="Loading WhisperX model..."
             )
-
-        # Load models
-        model = load_models()
-
-        # Load audio
-        audio = whisperx.load_audio(audio_path)
         
-        # Log audio duration if upload_id provided
+        # 1. Load model and transcribe
+        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL})...")
+        model = whisperx.load_model(
+            DEFAULT_MODEL, 
+            device, 
+            compute_type=compute_type,
+            multilingual=True,
+            max_new_tokens=128,
+            clip_timestamps=True,
+            hallucination_silence_threshold=3.0,
+            hotwords=[]
+        )
+        
         if upload_id:
-            duration = len(audio) / 16000  # Convert samples to seconds
-            logger.info(f"[{upload_id}] Audio duration: {duration:.2f} seconds")
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
-                progress=25,
-                message=f"Transcribing {duration:.1f} seconds of audio..."
+                progress=30,
+                message="Transcribing audio..."
             )
         
-        # Transcribe with batch size appropriate for the device
+        # Load and transcribe audio
+        audio = whisperx.load_audio(audio_path)
         batch_size = 16 if device == "cuda" else 8
-        transcribe_start = time.time()
-        logger.info(f"[{upload_id}] Starting transcription...")
         result = model.transcribe(audio, batch_size=batch_size)
-        transcribe_time = time.time() - transcribe_start
-        logger.info(f"[{upload_id}] Transcription completed in {transcribe_time:.2f} seconds")
         
-        # Get the detected language
+        # Log detected language
         language_code = result["language"]
+        logger.info(f"[{upload_id}] Detected language: {language_code}")
+        
+        # Free up GPU memory
+        del model
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
         
         if upload_id:
-            logger.info(f"[{upload_id}] Detected language: {language_code}")
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
-                progress=35,
+                progress=50,
                 message="Aligning transcription with audio..."
             )
         
-        # Load alignment model for the detected language
-        align_model_load_start = time.time()
+        # 2. Align whisper output
         logger.info(f"[{upload_id}] Loading alignment model...")
-        alignment_model, metadata = whisperx.load_align_model(
-            language_code=language_code,
-            device=device
-        )
-        align_model_load_time = time.time() - align_model_load_start
-        logger.info(f"[{upload_id}] Alignment model loaded in {align_model_load_time:.2f} seconds")
-        
-        # Align the transcription with the audio to get word-level timestamps
-        align_start = time.time()
-        logger.info(f"[{upload_id}] Aligning timestamps...")
+        model_a, metadata = whisperx.load_align_model(language_code=language_code, device=device)
         result = whisperx.align(
             result["segments"],
-            alignment_model,
+            model_a,
             metadata,
             audio,
             device,
             return_char_alignments=False
         )
-        align_time = time.time() - align_start
-        logger.info(f"[{upload_id}] Alignment completed in {align_time:.2f} seconds")
+        logger.info(f"[{upload_id}] Alignment complete")
         
-        if upload_id:
-            segments_count = len(result.get("segments", []))
-            logger.info(f"[{upload_id}] Alignment complete. Generated {segments_count} segments")
+        # Free up GPU memory
+        del model_a
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
         
-        # Log final statistics
+        # 3. Speaker diarization (if requested and token available)
+        if diarize and HF_TOKEN:
+            if upload_id:
+                update_processing_status(
+                    upload_id=upload_id,
+                    status="processing",
+                    progress=70,
+                    message="Identifying speakers..."
+                )
+            
+            try:
+                logger.info(f"[{upload_id}] Running speaker diarization...")
+                diarize_model = whisperx.diarize.DiarizationPipeline(
+                    use_auth_token=HF_TOKEN,
+                    device=device
+                )
+                
+                # Run diarization
+                diarize_segments = diarize_model(audio)
+                
+                # Assign speakers to words/segments
+                result = whisperx.assign_word_speakers(diarize_segments, result)
+                logger.info(f"[{upload_id}] Speaker diarization complete")
+                
+                # Count unique speakers
+                speaker_set = set()
+                for segment in result["segments"]:
+                    if "speaker" in segment:
+                        speaker_set.add(segment["speaker"])
+                
+                logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers")
+                
+                # Free up GPU memory
+                del diarize_model
+                gc.collect()
+                if device == "cuda":
+                    torch.cuda.empty_cache()
+            
+            except Exception as e:
+                logger.error(f"[{upload_id}] Speaker diarization failed: {str(e)}")
+                logger.info(f"[{upload_id}] Continuing with transcription without speaker information")
+        
+        # Log completion statistics
         total_time = time.time() - start_time
         num_segments = len(result["segments"])
         total_duration = result["segments"][-1]["end"] if result["segments"] else 0
-        words_per_second = sum(len(s["text"].split()) for s in result["segments"]) / total_duration if total_duration > 0 else 0
-
-        logger.info(f"[{upload_id}] Transcription Statistics:")
-        logger.info(f"[{upload_id}] - Total processing time: {total_time:.2f} seconds")
-        logger.info(f"[{upload_id}] - Number of segments: {num_segments}")
-        logger.info(f"[{upload_id}] - Audio duration: {total_duration:.2f} seconds")
-        logger.info(f"[{upload_id}] - Processing speed: {total_duration/total_time:.2f}x realtime")
-        logger.info(f"[{upload_id}] - Words per second: {words_per_second:.2f}")
-
+        
+        logger.info(f"[{upload_id}] Transcription complete: {num_segments} segments, {total_duration:.2f} seconds")
+        logger.info(f"[{upload_id}] Processing time: {total_time:.2f}s ({total_duration/total_time:.2f}x realtime)")
+        
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
-                progress=40,
-                message=f"Transcription completed: {num_segments} segments processed"
+                progress=90,
+                message="Transcription complete!"
             )
-
-        # Return the aligned result with word-level timestamps
+        
+        # Return the result with speaker information
         return result
         
     except Exception as e:
@@ -171,7 +293,4 @@ def transcribe_audio(audio_path: str, upload_id: str = None) -> Dict[str, Any]:
                 progress=0,
                 message=error_msg
             )
-        return {
-            "error": str(e),
-            "segments": []
-        }
+        return {"error": str(e), "segments": []}

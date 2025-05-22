@@ -5,13 +5,19 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import os
 from dotenv import load_dotenv
+import threading
+import logging
 
 # Add this line to treat the directory as a package
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Import API route modules
+# Import API route modules first - DON'T import whisperx here to avoid startup loading
 from api.routes import router as main_router
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -56,6 +62,53 @@ try:
     os.chmod("uploads", 0o755)
 except Exception as e:
     print(f"Warning: Could not set permissions on uploads directory: {e}")
+
+# Pre-load WhisperX model in background thread to avoid blocking startup
+def preload_whisperx_model():
+    logger.info("Pre-loading WhisperX model in background thread...")
+    try:
+        # Import AI modules only when needed
+        from ai import whisperx
+        
+        # Set a limit on CPU usage if possible to prevent server from becoming unresponsive
+        try:
+            import psutil
+            current_process = psutil.Process()
+            if hasattr(current_process, 'cpu_affinity'):
+                # Use only half of the available CPUs for model loading to keep system responsive
+                available_cpus = len(current_process.cpu_affinity())
+                cpus_to_use = max(1, available_cpus // 2)
+                new_affinity = list(range(cpus_to_use))
+                current_process.cpu_affinity(new_affinity)
+                logger.info(f"Limited model loading to {cpus_to_use} CPU cores to maintain responsiveness")
+        except (ImportError, Exception) as e:
+            logger.warning(f"Could not set CPU affinity for model loading thread: {e}")
+        
+        # Load the model with improved thread synchronization
+        whisperx.load_models()
+        logger.info("WhisperX model pre-loaded successfully!")
+    except Exception as e:
+        logger.error(f"Error pre-loading WhisperX model: {str(e)}")
+        logger.info("Will load model on first request instead")
+
+# Start model pre-loading in background after startup
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting ClipSummary API server...")
+    
+    # Start preloading in background after a delay
+    def delayed_preload():
+        # Wait for 10 seconds before starting to load the model
+        # This gives time for the API to be fully ready to serve requests
+        import time
+        time.sleep(10)
+        preload_whisperx_model()
+    
+    # Start preloading in background
+    preload_thread = threading.Thread(target=delayed_preload)
+    preload_thread.daemon = True
+    preload_thread.start()
+    logger.info("WhisperX pre-loading will start in 10 seconds")
 
 # Mount static directories for serving uploaded files
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")

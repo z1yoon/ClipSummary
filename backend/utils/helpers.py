@@ -190,3 +190,56 @@ def clean_temporary_files(directory: str, exclude_patterns: list = None) -> bool
     except Exception as e:
         print(f"Error cleaning temporary files: {str(e)}")
         return False
+
+def extract_thumbnail(video_path: str, output_path: str, time_position: float = None) -> str:
+    """
+    Extract a thumbnail image from a video file using ffmpeg
+    
+    Args:
+        video_path: Path to the video file
+        output_path: Path to save the thumbnail image
+        time_position: Position in seconds to extract thumbnail from (default: 10% of duration)
+        
+    Returns:
+        Path to the extracted thumbnail file
+    """
+    try:
+        # If time position not specified, use 10% of video duration
+        if time_position is None:
+            metadata = get_video_metadata(video_path)
+            duration = metadata.get('duration', 0)
+            time_position = max(1.0, min(duration * 0.1, 10.0))  # Between 1-10 seconds
+        
+        # Extract thumbnail using ffmpeg
+        (
+            ffmpeg
+            .input(video_path, ss=time_position)  # Seek to time position
+            .output(output_path, vframes=1)       # Extract single frame
+            .run(quiet=True, overwrite_output=True)
+        )
+        
+        return output_path
+        
+    except ffmpeg.Error as e:
+        print(f"Error extracting thumbnail: {e.stderr.decode() if e.stderr else str(e)}")
+        
+        # Fallback method using subprocess if ffmpeg.python fails
+        try:
+            subprocess.run([
+                'ffmpeg',
+                '-ss', str(time_position),
+                '-i', video_path,
+                '-vframes', '1',
+                '-q:v', '2',
+                '-y',
+                output_path
+            ], check=True, capture_output=True)
+            
+            return output_path
+            
+        except subprocess.CalledProcessError as sub_err:
+            print(f"Fallback thumbnail extraction failed: {sub_err.stderr.decode() if sub_err.stderr else str(sub_err)}")
+            raise
+    except Exception as e:
+        print(f"Unexpected error extracting thumbnail: {str(e)}")
+        raise

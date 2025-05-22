@@ -3,9 +3,8 @@ fastapi==0.104.0
 uvicorn==0.23.2
 python-multipart==0.0.6
 pydantic==2.4.2
-python-jose==3.3.0
-python-dotenv==1.0.0
 httpx==0.25.0
+python-dotenv==1.0.0
 
 # Authentication and security
 passlib[bcrypt]==1.7.4
@@ -28,5 +27,8 @@ whisperx==3.1.1
 torch==2.1.2
 transformers==4.37.2
 accelerate==0.25.0
-optimum==1.16.1
+hf_xet  # Added for improved Hugging Face Hub download performance
+
+# Only needed if using speaker diarization
+pyannote.audio==3.1.1
 bitsandbytes==0.41.3
