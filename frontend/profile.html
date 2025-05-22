@@ -5,127 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Videos | ClipSummary</title>
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/profile.css">
     <link rel="icon" type="image/svg+xml" href="images/favicons/favicon.svg">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;600;800&display=swap" rel="stylesheet">
-    <style>
-        .profile-container {
-            padding: 2rem;
-        }
-        
-        .profile-header {
-            margin-bottom: 2rem;
-        }
-        
-        .video-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1.5rem;
-        }
-        
-        .video-card {
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-            transition: transform 0.2s;
-        }
-        
-        .video-card:hover {
-            transform: translateY(-5px);
-        }
-        
-        .video-thumbnail {
-            width: 100%;
-            height: 160px;
-            object-fit: cover;
-            background-color: #f0f0f0;
-        }
-        
-        .video-info {
-            padding: 1rem;
-        }
-        
-        .video-title {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        
-        .video-date {
-            font-size: 0.8rem;
-            color: #777;
-        }
-        
-        .video-status {
-            font-size: 0.9rem;
-            margin-top: 0.5rem;
-            padding: 3px 8px;
-            border-radius: 3px;
-            display: inline-block;
-        }
-        
-        .status-processing {
-            background-color: #fff3cd;
-            color: #856404;
-        }
-        
-        .status-completed {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        
-        .status-failed {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-
-        .video-actions {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 1rem;
-            border-top: 1px solid #eee;
-            padding-top: 1rem;
-        }
-        
-        .no-videos {
-            text-align: center;
-            padding: 3rem;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-        }
-        
-        .no-videos i {
-            font-size: 3rem;
-            color: #ccc;
-            margin-bottom: 1rem;
-        }
-        
-        .loader {
-            text-align: center;
-            padding: 3rem;
-        }
-        
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 2s linear infinite;
-            margin: 0 auto 1rem;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
 </head>
 <body>
+    <!-- Background elements -->
+    <div class="background">
+        <div class="swirl"></div>
+        <div class="cubes"></div>
+        <div class="gradient-overlay"></div>
+    </div>
+
     <div class="container">
         <header>
             <div class="logo">

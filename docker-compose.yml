@@ -48,7 +48,6 @@ services:
     image: redis:alpine
     volumes:
       - redis-data:/data
-    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
 
   postgres:
     image: postgres:13
@@ -64,15 +63,5 @@ services:
 
 volumes:
   redis-data:
-    driver: local
-    driver_opts:
-      type: none
-      device: ${PWD}/data/redis
-      o: bind
   uploads:
-    driver: local
-    driver_opts:
-      type: none
-      device: ${PWD}/uploads
-      o: bind
   postgres-data:

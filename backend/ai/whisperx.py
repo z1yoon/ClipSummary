@@ -103,15 +103,11 @@ def load_models():
         model_loading_state["progress"] = 50
         model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model..."
         
-        # Load the model with all required parameters for WhisperX
+        # Load the model with compatible parameters for WhisperX 3.1.1
         asr_model = whisperx.load_model(
             DEFAULT_MODEL, 
             device, 
-            compute_type=compute_type,
-            max_new_tokens=128,
-            clip_timestamps=True,
-            hallucination_silence_threshold=3.0,
-            hotwords=[]
+            compute_type=compute_type
         )
         
         model_loading_state["progress"] = 100
@@ -163,11 +159,7 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
         model = whisperx.load_model(
             DEFAULT_MODEL, 
             device, 
-            compute_type=compute_type,
-            max_new_tokens=128,
-            clip_timestamps=True,
-            hallucination_silence_threshold=3.0,
-            hotwords=[]
+            compute_type=compute_type
         )
         
         if upload_id:
