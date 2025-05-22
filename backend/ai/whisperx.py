@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 # Set device and compute type
 device = "cuda" if torch.cuda.is_available() else "cpu"
-compute_type = "float16" if device == "cuda" else "float32"
+compute_type = "float16" if device == "cuda" else "int8"
 
 # Default model size - balance between accuracy and performance
-DEFAULT_MODEL = "medium"
+DEFAULT_MODEL = "large-v2" if device == "cuda" else "medium"
 
 # Get HuggingFace token from environment variables for speaker diarization
 HF_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -108,7 +108,6 @@ def load_models():
             DEFAULT_MODEL, 
             device, 
             compute_type=compute_type,
-            multilingual=True,
             max_new_tokens=128,
             clip_timestamps=True,
             hallucination_silence_threshold=3.0,
@@ -165,7 +164,6 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             DEFAULT_MODEL, 
             device, 
             compute_type=compute_type,
-            multilingual=True,
             max_new_tokens=128,
             clip_timestamps=True,
             hallucination_silence_threshold=3.0,
@@ -262,35 +260,38 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             
             except Exception as e:
                 logger.error(f"[{upload_id}] Speaker diarization failed: {str(e)}")
-                logger.info(f"[{upload_id}] Continuing with transcription without speaker information")
+                logger.info(f"[{upload_id}] Continuing with transcription without speaker identification")
         
-        # Log completion statistics
-        total_time = time.time() - start_time
-        num_segments = len(result["segments"])
-        total_duration = result["segments"][-1]["end"] if result["segments"] else 0
+        else:
+            if not diarize:
+                logger.info(f"[{upload_id}] Speaker diarization skipped by request")
+            elif not HF_TOKEN:
+                logger.warning(f"[{upload_id}] Speaker diarization skipped: No Hugging Face token provided")
         
-        logger.info(f"[{upload_id}] Transcription complete: {num_segments} segments, {total_duration:.2f} seconds")
-        logger.info(f"[{upload_id}] Processing time: {total_time:.2f}s ({total_duration/total_time:.2f}x realtime)")
+        # Log completion time
+        end_time = time.time()
+        duration = end_time - start_time
+        segment_count = len(result["segments"]) if "segments" in result else 0
+        logger.info(f"[{upload_id}] Transcription completed, {segment_count} segments generated")
+        logger.info(f"[{upload_id}] Processing took {duration:.2f} seconds")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
-                status="processing",
-                progress=90,
-                message="Transcription complete!"
+                status="completed",
+                progress=100,
+                message="Transcription complete"
             )
         
-        # Return the result with speaker information
         return result
-        
+    
     except Exception as e:
-        error_msg = f"Transcription failed: {str(e)}"
-        logger.error(f"[{upload_id}] {error_msg}")
+        logger.error(f"[{upload_id}] Transcription failed: {str(e)}")
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
-                status="error",
+                status="failed",
                 progress=0,
-                message=error_msg
+                message=f"Processing failed: {str(e)}"
             )
-        return {"error": str(e), "segments": []}
+        raise

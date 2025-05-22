@@ -25,10 +25,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // Only update if not authenticated and login button doesn't have the icon
             else {
                 const loginBtn = authLinks.querySelector('.login-btn i');
-                // Check if login button exists but doesn't have the icon yet
-                if (!loginBtn || !loginBtn.classList.contains('fa-sign-in-alt')) {
+                // Check if login button exists but doesn't have the right icon
+                if (!loginBtn || !loginBtn.classList.contains('fa-right-to-bracket')) {
                     authLinks.innerHTML = `
-                        <li><a href="/login.html" class="btn btn-outline login-btn"><span>Login</span><i class="fas fa-sign-in-alt"></i></a></li>
+                        <li><a href="/login.html" class="btn btn-outline login-btn"><i class="fa-solid fa-right-to-bracket"></i>Login</a></li>
                         <li><a href="/signup.html" class="btn btn-primary">Register Now</a></li>
                     `;
                 }
@@ -227,121 +227,295 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function trackProcessing(uploadId) {
-        const statusElement = document.querySelector('.processing-status');
-        if (!statusElement) return;
-
+        // Define the expected backend processing stages with their associated messages
+        const processingStages = [
+            { progress: 15, message: "Loading WhisperX ASR model...", startTime: null },
+            { progress: 25, message: "Extracting audio from video...", startTime: null },
+            { progress: 40, message: "Transcribing audio with WhisperX...", startTime: null },
+            { progress: 60, message: "Aligning transcription with audio...", startTime: null },
+            { progress: 75, message: "Generating summary from transcript...", startTime: null },
+            { progress: 85, message: "Translating content to requested languages...", startTime: null },
+            { progress: 95, message: "Finalizing video processing...", startTime: null }
+        ];
+        
+        let currentStageIndex = 0;
+        let lastProgressData = null;
+        let processingStartTime = Date.now();
+        
+        // Initialize the first stage's start time
+        processingStages[0].startTime = processingStartTime;
+        
         const checkStatus = async () => {
             try {
                 const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
                 const data = await response.json();
                 
-                showProcessingStatus(data);
+                // Keep track of the last data to avoid blinking on network errors
+                if (data) {
+                    lastProgressData = data;
+                }
+                
+                // Check for specific backend messages to match with our stages
+                if (data.message) {
+                    const lowerMessage = data.message.toLowerCase();
+                    
+                    // Check for WhisperX model loading
+                    if (lowerMessage.includes('whisperx') && lowerMessage.includes('model')) {
+                        if (currentStageIndex < 1) {
+                            currentStageIndex = 0;
+                            if (!processingStages[0].startTime) {
+                                processingStages[0].startTime = Date.now();
+                            }
+                        }
+                    }
+                    // Check for audio extraction
+                    else if (lowerMessage.includes('extract') && lowerMessage.includes('audio')) {
+                        if (currentStageIndex < 2) {
+                            currentStageIndex = 1;
+                            if (!processingStages[1].startTime) {
+                                processingStages[1].startTime = Date.now();
+                            }
+                        }
+                    }
+                    // Check for transcription
+                    else if (lowerMessage.includes('transcrib')) {
+                        if (currentStageIndex < 3) {
+                            currentStageIndex = 2;
+                            if (!processingStages[2].startTime) {
+                                processingStages[2].startTime = Date.now();
+                            }
+                        }
+                    }
+                    // Check for alignment
+                    else if (lowerMessage.includes('align')) {
+                        if (currentStageIndex < 4) {
+                            currentStageIndex = 3;
+                            if (!processingStages[3].startTime) {
+                                processingStages[3].startTime = Date.now();
+                            }
+                        }
+                    }
+                    // Check for summarization
+                    else if (lowerMessage.includes('summary') || lowerMessage.includes('generat')) {
+                        if (currentStageIndex < 5) {
+                            currentStageIndex = 4;
+                            if (!processingStages[4].startTime) {
+                                processingStages[4].startTime = Date.now();
+                            }
+                        }
+                    }
+                    // Check for translation
+                    else if (lowerMessage.includes('translat')) {
+                        if (currentStageIndex < 6) {
+                            currentStageIndex = 5;
+                            if (!processingStages[5].startTime) {
+                                processingStages[5].startTime = Date.now();
+                            }
+                        }
+                    }
+                    // Check for finalization
+                    else if (lowerMessage.includes('finaliz') || lowerMessage.includes('finish')) {
+                        if (currentStageIndex < 7) {
+                            currentStageIndex = 6;
+                            if (!processingStages[6].startTime) {
+                                processingStages[6].startTime = Date.now();
+                            }
+                        }
+                    }
+                }
+                
+                // If backend doesn't provide detailed status, show predicted stages
+                if (data.status === 'processing' && data.progress > 0) {
+                    // Only move to next stage if we're still processing and progress has increased
+                    if (data.progress >= processingStages[currentStageIndex].progress && 
+                        currentStageIndex < processingStages.length - 1) {
+                        currentStageIndex++;
+                        // Set the start time for this stage if it's not set yet
+                        if (!processingStages[currentStageIndex].startTime) {
+                            processingStages[currentStageIndex].startTime = Date.now();
+                        }
+                    }
+                }
+                
+                // Calculate the elapsed time for current stage
+                const currentStage = processingStages[currentStageIndex];
+                const elapsedTimeForStage = currentStage.startTime ? Math.floor((Date.now() - currentStage.startTime) / 1000) : 0;
+                const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
+
+                // Format times for display
+                const elapsedTimeForStageFormatted = formatTime(elapsedTimeForStage);
+                const totalElapsedTimeFormatted = formatTime(totalElapsedTime);
+                
+                // Use backend message if it's specific, otherwise use our staged messages with elapsed time
+                let message = data.message;
+                if (!message || message.includes('processing') || message.includes('Processing')) {
+                    message = `${currentStage.message} (${elapsedTimeForStageFormatted})`;
+                }
+                
+                // Add elapsed time to the data we'll show
+                const updatedData = {
+                    ...data,
+                    message,
+                    elapsedTime: totalElapsedTimeFormatted,
+                    totalElapsedSeconds: totalElapsedTime,
+                    stageElapsedSeconds: elapsedTimeForStage,
+                };
+                
+                // Update the UI with the current status
+                showProcessingStatus(updatedData);
                 
                 if (data.status === 'completed') {
-                    window.location.href = `/video.html?id=${uploadId}`;
+                    const finalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
+                    const finalElapsedTimeFormatted = formatTime(finalElapsedTime);
+                    
+                    showProcessingStatus({
+                        status: 'completed',
+                        progress: 100, 
+                        message: `Processing completed successfully! Total time: ${finalElapsedTimeFormatted}`,
+                        elapsedTime: finalElapsedTimeFormatted,
+                    });
+                    
+                    // Wait a moment before redirecting to the results page
+                    setTimeout(() => {
+                        window.location.href = `/video.html?id=${uploadId}`;
+                    }, 2500);
                 } else if (data.status === 'failed') {
                     showError(data.message || 'Processing failed');
                 } else {
-                    // Continue checking status
-                    setTimeout(checkStatus, 2000);
+                    // Continue checking status at a reasonable interval
+                    setTimeout(checkStatus, 3000);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
-                showError('Failed to check processing status');
+                
+                // If we have previous data, keep showing it to prevent blinking
+                if (lastProgressData) {
+                    // Move to next stage on error to show progress
+                    if (currentStageIndex < processingStages.length - 1) {
+                        currentStageIndex++;
+                        // Set the start time for this stage if it's not set yet
+                        if (!processingStages[currentStageIndex].startTime) {
+                            processingStages[currentStageIndex].startTime = Date.now();
+                        }
+                    }
+                    
+                    const currentStage = processingStages[currentStageIndex];
+                    const elapsedTimeForStage = currentStage.startTime ? Math.floor((Date.now() - currentStage.startTime) / 1000) : 0;
+                    const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
+                    
+                    const updatedData = {
+                        ...lastProgressData,
+                        message: `${currentStage.message} (${formatTime(elapsedTimeForStage)})`,
+                        progress: currentStage.progress,
+                        elapsedTime: formatTime(totalElapsedTime),
+                    };
+                    
+                    showProcessingStatus(updatedData);
+                } else {
+                    // Only show error if we have no previous data to display
+                    showError('Failed to check processing status');
+                }
+                
+                // Continue checking despite errors
+                setTimeout(checkStatus, 5000);
             }
         };
 
         // Start checking status
-        checkStatus();
+        setTimeout(checkStatus, 2000);
     }
 
     function showProcessingStatus(data) {
-        const mainContent = document.querySelector('.main-content');
-        if (!mainContent) return;
-
-        let statusContainer = document.querySelector('.processing-status');
-        if (!statusContainer) {
-            statusContainer = document.createElement('div');
-            statusContainer.className = 'processing-status';
-            mainContent.appendChild(statusContainer);
-        }
-
-        const statusClass = data.status === 'failed' ? 'error' : 
-                           data.status === 'completed' ? 'completed' : 
-                           'processing';
-
-        statusContainer.innerHTML = `
-            <div class="status-container ${statusClass}">
-                <div class="status-content">
-                    <div class="processing-step">${getStatusTitle(data.status)}</div>
-                    <div class="status-message">${data.message}</div>
-                    <div class="process-progress-bar">
-                        <div class="process-progress-filled" style="width: ${data.progress}%"></div>
-                    </div>
-                    <div class="progress-percentage">${Math.round(data.progress)}%</div>
-                    ${getEstimatedTime(data)}
-                </div>
-            </div>
-        `;
-    }
-
-    function getStatusTitle(status) {
-        const titles = {
-            'uploading': 'Uploading Video',
-            'processing': 'Processing Video',
-            'completed': 'Processing Complete',
-            'failed': 'Processing Failed',
-            'error': 'Error'
-        };
-        return titles[status] || 'Processing';
-    }
-
-    function getEstimatedTime(data) {
-        if (data.status === 'completed' || data.status === 'failed') return '';
+        // Use inline processing status bar instead of popup overlay
+        const inlineStatus = document.querySelector('.inline-processing-status');
+        const inlineProgressFill = inlineStatus.querySelector('.inline-progress-fill');
+        const inlineStatusText = inlineStatus.querySelector('.inline-status-text');
         
-        // Only show estimated time if we have progress
-        if (data.progress > 0) {
-            // Simple time estimation based on current progress
-            const timeElapsed = (Date.now() - data.startTime) / 1000; // in seconds
-            const estimatedTotal = (timeElapsed / data.progress) * 100;
-            const timeRemaining = Math.max(0, estimatedTotal - timeElapsed);
-            
-            return `
-                <div class="time-remaining">
-                    Estimated time remaining: ${formatTime(timeRemaining)}
-                </div>
-            `;
+        // Format the progress percentage
+        const progressPercent = Math.round(data.progress);
+        
+        // Determine status message and icons
+        let statusMessage = data.message || '';
+        let stageInfo = '';
+        
+        if (data.status === 'uploading') {
+            statusMessage = `Uploading: ${progressPercent}% complete...`;
+        } else if (data.status === 'processing') {
+            // Add current stage info if available
+            if (data.stageElapsedSeconds) {
+                stageInfo = `<span class="inline-status-stage">${formatTime(data.stageElapsedSeconds)}</span>`;
+            }
         }
-        return '';
+        
+        // Show the inline status bar
+        inlineStatus.style.display = 'flex';
+        
+        // Update progress bar
+        inlineProgressFill.style.width = `${progressPercent}%`;
+        
+        // Update status text
+        inlineStatusText.innerHTML = `${statusMessage} ${stageInfo}`;
+        
+        // Handle completed processing
+        if (data.status === 'completed') {
+            inlineProgressFill.style.width = '100%';
+            inlineStatusText.textContent = 'Processing completed successfully!';
+            
+            // Wait a moment before redirecting
+            setTimeout(() => {
+                const uploadId = data.upload_id || getUploadIdFromResponse(data);
+                if (uploadId) {
+                    window.location.href = `/video.html?id=${uploadId}`;
+                }
+            }, 1500);
+        } 
+        // Handle failed processing
+        else if (data.status === 'failed') {
+            inlineStatus.style.backgroundColor = 'rgba(220, 53, 69, 0.85)'; // Error background
+            inlineStatusText.textContent = data.message || 'Processing failed';
+        }
+    }
+    
+    // Helper function to extract upload ID from response
+    function getUploadIdFromResponse(data) {
+        if (data.upload_id) return data.upload_id;
+        if (data.video_id) return data.video_id;
+        return null;
+    }
+    
+    function hideProcessingStatus() {
+        const inlineStatus = document.querySelector('.inline-processing-status');
+        if (inlineStatus) {
+            inlineStatus.style.display = 'none';
+            const inlineProgressFill = inlineStatus.querySelector('.inline-progress-fill');
+            if (inlineProgressFill) {
+                inlineProgressFill.style.width = '0%';
+            }
+        }
+    }
+
+    function showError(message) {
+        const inlineStatus = document.querySelector('.inline-processing-status');
+        const inlineStatusText = inlineStatus.querySelector('.inline-status-text');
+        
+        // Display error in inline status
+        inlineStatus.style.display = 'flex';
+        inlineStatus.style.backgroundColor = 'rgba(220, 53, 69, 0.85)'; // Error background
+        inlineStatusText.textContent = message;
+        
+        // Reset after a delay
+        setTimeout(() => {
+            inlineStatus.style.backgroundColor = '';
+            inlineStatus.style.display = 'none';
+        }, 5000);
     }
 
     function formatTime(seconds) {
+        if (isNaN(seconds)) return 'Calculating...';
         if (seconds < 60) return `${Math.round(seconds)} seconds`;
         const minutes = Math.floor(seconds / 60);
         const remainingSeconds = Math.round(seconds % 60);
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')} minutes`;
-    }
-
-    function showError(message) {
-        const mainContent = document.querySelector('.main-content');
-        if (!mainContent) return;
-
-        const errorElement = document.createElement('div');
-        errorElement.className = 'error-message';
-        errorElement.innerHTML = `
-            <i class="fas fa-exclamation-circle"></i>
-            <h3>Error</h3>
-            <p>${message}</p>
-            <button class="btn btn-primary" onclick="location.reload()">Try Again</button>
-        `;
-
-        // Replace processing status if it exists
-        const statusElement = document.querySelector('.processing-status');
-        if (statusElement) {
-            statusElement.replaceWith(errorElement);
-        } else {
-            mainContent.appendChild(errorElement);
-        }
     }
 
     // URL submission - also modified to use authenticated fetch
@@ -416,9 +590,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     function trackYouTubeProcessing(videoId) {
-        const statusElement = document.querySelector('.processing-status');
-        if (!statusElement) return;
-
+        // Remove dependency on the statusElement check
         const startTime = Date.now();
         let processingStep = 1;
         const processingSteps = [

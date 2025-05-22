@@ -216,6 +216,35 @@ header {
     border-color: #1346cc;
 }
 
+/* Login icon */
+.login-icon {
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 24px !important;
+    height: 24px !important;
+    margin-left: 8px;
+}
+
+.login-icon path {
+    fill: var(--text-muted);
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.btn-outline:hover .login-icon path {
+    fill: var(--primary-color);
+}
+
+/* Make sure the SVG path is visible */
+.login-icon path {
+    fill: var(--text-muted);
+}
+
+.btn-outline:hover .login-icon path {
+    fill: var(--primary-color);
+}
+
 /* Main content */
 main {
     display: flex;
@@ -654,6 +683,367 @@ main {
     white-space: nowrap;
     font-size: 12px;
     color: var(--text-muted);
+}
+
+/* Upload progress pop-up overlay */
+.progress-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(11, 16, 27, 0.9);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    transition: opacity 0.3s ease;
+}
+
+.progress-overlay.fade-out {
+    opacity: 0;
+}
+
+.progress-popup {
+    background: linear-gradient(135deg, rgba(22, 28, 39, 0.95) 0%, rgba(38, 46, 68, 0.95) 100%);
+    border-radius: 16px;
+    padding: 30px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    animation: fade-in 0.3s ease-out;
+    transition: all 0.3s ease;
+}
+
+.progress-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.progress-header i {
+    font-size: 24px;
+    margin-right: 15px;
+    color: var(--primary-color);
+}
+
+.total-time {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 13px;
+    background-color: rgba(20, 78, 227, 0.1);
+    padding: 4px 10px;
+    border-radius: 24px;
+    color: var(--text-muted);
+}
+
+.progress-title {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-light);
+    margin: 0;
+}
+
+.progress-body {
+    margin-bottom: 25px;
+}
+
+.progress-message {
+    font-size: 16px;
+    color: var(--text-light);
+    margin-bottom: 15px;
+    transition: opacity 0.2s ease;
+}
+
+.progress-bar-container {
+    height: 10px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+    border-radius: 5px;
+    transition: width 0.5s ease-out; /* Smooth transition for progress bar */
+}
+
+.progress-details {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-muted);
+    font-size: 14px;
+    transition: opacity 0.2s ease;
+}
+
+.progress-time {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 14px;
+    margin-top: 10px;
+    transition: opacity 0.2s ease;
+}
+
+.progress-buttons {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 20px;
+}
+
+.progress-buttons button {
+    padding: 10px 20px;
+    border-radius: 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.progress-buttons .cancel-btn {
+    background-color: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+}
+
+.progress-buttons .cancel-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--text-light);
+}
+
+.error-popup {
+    border-left: 4px solid var(--error-color, #dc3545);
+}
+
+.success-popup {
+    border-left: 4px solid var(--success-color, #28a745);
+}
+
+.processing-steps-container {
+    margin-top: 25px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.processing-steps {
+    display: flex;
+    justify-content: space-between;
+    margin: 10px 0;
+    position: relative;
+}
+
+.processing-steps::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-50%);
+    z-index: 0;
+}
+
+.processing-steps .step {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    position: relative;
+    z-index: 1;
+    transition: all 0.3s ease;
+    cursor: help;
+}
+
+.processing-steps .step.active {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+    box-shadow: 0 0 10px rgba(20, 78, 227, 0.5);
+}
+
+.stage-timer {
+    background-color: rgba(20, 78, 227, 0.1);
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Enhanced processing step indicators */
+.progress-steps-visual {
+    display: flex;
+    flex-direction: column;
+    margin-top: 20px;
+    background-color: rgba(11, 16, 27, 0.4);
+    border-radius: 8px;
+    padding: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.progress-step {
+    display: flex;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    opacity: 0.5;
+    transition: all 0.3s ease;
+}
+
+.progress-step:last-child {
+    border-bottom: none;
+}
+
+.progress-step.active {
+    opacity: 1;
+}
+
+.progress-step.completed {
+    opacity: 0.8;
+}
+
+.progress-step-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background-color: var(--darker-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.progress-step.active .progress-step-icon {
+    background-color: var(--primary-color);
+    box-shadow: 0 0 10px rgba(20, 78, 227, 0.5);
+}
+
+.progress-step.completed .progress-step-icon {
+    background-color: var(--success-color, #28a745);
+}
+
+.progress-step-icon i {
+    font-size: 12px;
+    color: white;
+}
+
+.progress-step-details {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
+
+.progress-step-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-light);
+    margin-bottom: 2px;
+}
+
+.progress-step-time {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.progress-step-loader {
+    width: 50px;
+    height: 4px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-left: auto;
+}
+
+.progress-step.active .progress-step-loader::before {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 100%;
+    background-color: var(--primary-color);
+    animation: progress-loader 2s infinite ease-in-out;
+    border-radius: 2px;
+}
+
+@keyframes progress-loader {
+    0% { transform: translateX(-100%); }
+    50% { transform: translateX(0); }
+    100% { transform: translateX(100%); }
+}
+
+/* Inline processing status bar */
+.inline-processing-status {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: rgba(11, 16, 27, 0.85);
+    padding: 12px 20px;
+    border-bottom-left-radius: 32px;
+    border-bottom-right-radius: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(4px);
+}
+
+.inline-progress-bar {
+    height: 6px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    width: 100%;
+}
+
+.inline-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.5s ease-out;
+}
+
+.inline-status-text {
+    font-size: 14px;
+    color: var(--text-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.inline-status-stage {
+    font-size: 12px;
+    color: var(--text-muted);
+    background-color: rgba(20, 78, 227, 0.1);
+    padding: 2px 8px;
+    border-radius: 12px;
+    margin-left: auto;
 }
 
 /* Responsive styles */

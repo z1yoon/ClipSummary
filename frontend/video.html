@@ -3,753 +3,380 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Viewer | ClipSummary</title>
+    <title>Video Player - ClipSummary</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/styles.css">
     <link rel="stylesheet" href="css/video-page.css">
     <link rel="icon" type="image/svg+xml" href="images/favicons/favicon.svg">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;600;800&display=swap" rel="stylesheet">
 </head>
 <body>
+    <!-- Background elements -->
+    <div class="background">
+        <div class="swirl"></div>
+        <div class="cubes"></div>
+        <div class="gradient-overlay"></div>
+    </div>
+
     <div class="container">
         <header>
             <div class="logo">
-                <a href="/">
-                    <h1>ClipSummary<span class="registered">®</span></h1>
+                <h1>ClipSummary</h1>
+            </div>
+            <div class="nav-buttons">
+                <a href="/profile.html" class="btn btn-outline">
+                    <i class="fas fa-video"></i>
+                    My Videos
                 </a>
             </div>
-            <nav class="main-nav">
-                <ul class="auth-links">
-                    <!-- Will be replaced by JS based on auth status -->
-                </ul>
-            </nav>
         </header>
-
-        <main class="video-page">
-            <div class="video-meta">
-                <h2 id="video-title">Loading video...</h2>
-                <div class="video-actions">
-                    <div class="language-selector">
-                        <label for="language-select">Language:</label>
-                        <select id="language-select" class="language-select">
-                            <!-- Languages will be added by JavaScript -->
-                        </select>
-                    </div>
-                    <div class="subtitle-controls">
-                        <label for="subtitle-toggle" class="toggle-label">
-                            <span>Subtitles:</span>
-                            <div class="toggle-switch">
-                                <input type="checkbox" id="subtitle-toggle" checked>
-                                <span class="slider round"></span>
-                            </div>
-                        </label>
-                    </div>
-                    <div class="action-buttons">
-                        <button id="download-summary" class="btn btn-outline">
-                            <i class="fas fa-download"></i> Download Summary
-                        </button>
-                        <button id="copy-link" class="btn btn-outline">
-                            <i class="fas fa-link"></i> Copy Link
-                        </button>
-                        <button id="share-button" class="btn btn-primary">
-                            <i class="fas fa-share-alt"></i> Share
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="content-container">
-                <div class="video-container">
-                    <div class="video-player">
-                        <video id="video-element" controls controlsList="nodownload">
-                            <!-- Video source will be set by JavaScript -->
-                            <track id="subtitle-track" kind="subtitles" label="English" srclang="en" default>
-                        </video>
-                        <div id="subtitle-display" class="subtitle-display"></div>
-                    </div>
-                </div>
-
-                <div class="tabs-container">
-                    <div class="tabs">
-                        <button class="tab-btn active" data-tab="summary">Summary</button>
-                        <button class="tab-btn" data-tab="mindmap">MindMap</button>
-                        <button class="tab-btn" data-tab="notes">My Notes</button>
-                    </div>
-                    <div class="tab-content active" id="summary-tab">
-                        <div class="summary-content">
-                            <p id="summary-text">Loading summary...</p>
-                        </div>
-                    </div>
-                    <div class="tab-content" id="mindmap-tab">
-                        <div class="mindmap-content">
-                            <div id="mindmap">
-                                <p>MindMap feature coming soon...</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="tab-content" id="notes-tab">
-                        <div class="notes-content">
-                            <textarea id="user-notes" placeholder="Add your notes here..."></textarea>
-                            <button id="save-notes" class="btn btn-primary">Save Notes</button>
+        
+        <div class="video-container">
+            <div class="video-player-wrapper">
+                <div class="video-player">
+                    <video id="video-player" controls controlsList="nodownload">
+                        <source id="video-source" src="" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="subtitle-display" id="subtitle-display"></div>
+                    
+                    <div class="processing-overlay" id="processing-overlay">
+                        <div class="processing-spinner"></div>
+                        <div class="processing-text">
+                            <p>Processing your video...</p>
+                            <p id="processing-status">Analyzing audio and generating transcript</p>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <div class="transcript-section">
-                <div class="transcript-header">
-                    <h3>Transcript</h3>
-                    <div class="subtitle-language-selector">
-                        <label for="subtitle-language">Subtitle Language:</label>
-                        <select id="subtitle-language" class="subtitle-language-select">
-                            <!-- Languages will be added by JavaScript -->
-                        </select>
-                    </div>
-                    <div class="transcript-controls">
-                        <button class="btn-icon" id="transcript-list-view" title="List View">
-                            <i class="fas fa-list"></i>
-                        </button>
-                        <button class="btn-icon" id="transcript-paragraph-view" title="Paragraph View">
-                            <i class="fas fa-paragraph"></i>
-                        </button>
-                        <button class="btn-icon" id="transcript-time-toggle" title="Toggle Timestamps">
-                            <i class="fas fa-clock"></i>
-                        </button>
-                        <button class="btn-icon" id="transcript-auto-scroll" title="Auto Scroll">
-                            <i class="fas fa-arrows-alt-v"></i>
-                        </button>
-                        <button class="btn-icon" id="transcript-download" title="Download Transcript">
-                            <i class="fas fa-download"></i>
-                        </button>
-                        <button class="btn-icon" id="transcript-copy" title="Copy Transcript">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                    </div>
+            
+            <div class="video-controls">
+                <div class="language-selector">
+                    <select id="subtitle-language" class="language-select">
+                        <option value="en">English</option>
+                        <!-- Additional languages will be populated dynamically -->
+                    </select>
+                    
+                    <label class="toggle-label">
+                        <span>Subtitles</span>
+                        <span class="toggle-switch">
+                            <input type="checkbox" id="subtitle-toggle" checked>
+                            <span class="slider"></span>
+                        </span>
+                    </label>
                 </div>
-                <div class="transcript-content" id="transcript-container">
-                    <div class="loading-transcript">
-                        <span>Loading transcript...</span>
-                    </div>
+                
+                <div class="action-buttons">
+                    <button id="copy-link" class="btn btn-outline">
+                        <i class="fas fa-copy"></i> Copy Link
+                    </button>
+                    <button id="download-btn" class="btn btn-primary">
+                        <i class="fas fa-download"></i> Download
+                    </button>
                 </div>
             </div>
-        </main>
-    </div>
-
-    <!-- Share Modal -->
-    <div id="share-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-modal">&times;</span>
-            <h2>Share this video</h2>
-            <div class="share-options">
-                <div class="share-link-container">
-                    <input type="text" id="share-link-input" readonly>
-                    <button id="copy-share-link" class="btn btn-primary">Copy</button>
+        </div>
+        
+        <div class="content-box summary-box">
+            <div class="content-header">
+                <h2 class="content-title">Summary</h2>
+            </div>
+            <div class="content-text" id="summary-content">
+                <div class="processing-notice" id="summary-processing">
+                    <i class="fas fa-spinner fa-spin"></i> Your summary is being generated...
                 </div>
-                <div class="social-share-buttons">
-                    <button class="share-btn twitter">
-                        <i class="fab fa-twitter"></i> Twitter
-                    </button>
-                    <button class="share-btn facebook">
-                        <i class="fab fa-facebook"></i> Facebook
-                    </button>
-                    <button class="share-btn linkedin">
-                        <i class="fab fa-linkedin"></i> LinkedIn
-                    </button>
-                    <button class="share-btn email">
-                        <i class="fas fa-envelope"></i> Email
-                    </button>
+            </div>
+        </div>
+        
+        <div class="content-box transcript-box">
+            <div class="content-header">
+                <h2 class="content-title">Transcript</h2>
+            </div>
+            <div class="content-text" id="transcript-content">
+                <div class="loading-transcript" id="transcript-loading">
+                    <i class="fas fa-spinner fa-spin"></i> Loading transcript...
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="toast" class="toast">
-        <div class="toast-content">
-            <i class="fas fa-check-circle"></i>
-            <span id="toast-message"></span>
-        </div>
-    </div>
-
-    <script src="js/video-player.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', async function() {
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get video ID from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const videoId = urlParams.get('id');
+            
+            if (!videoId) {
+                alert('No video ID provided');
+                window.location.href = '/';
+                return;
+            }
+            
             // Check if user is authenticated
-            if (!localStorage.getItem('access_token')) {
+            const token = localStorage.getItem('access_token');
+            const tokenType = localStorage.getItem('token_type');
+            
+            if (!token) {
                 window.location.href = '/login.html?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
                 return;
             }
-
-            // Update authentication UI
-            updateAuthUI();
-
-            // Get video ID from URL
-            const params = new URLSearchParams(window.location.search);
-            const videoId = params.get('id');
-
-            if (!videoId) {
-                showError('No video ID provided');
-                return;
+            
+            // Function to make authenticated API requests
+            async function fetchWithAuth(url, options = {}) {
+                options.headers = options.headers || {};
+                options.headers['Authorization'] = `${tokenType} ${token}`;
+                return fetch(url, options);
             }
-
-            // Initialize tab switching
-            initTabs();
             
-            // Set up transcript view toggles
-            initTranscriptControls();
+            // Variables to store video data
+            let videoData = null;
+            let subtitles = {};
+            let currentSubtitleLanguage = 'en';
+            let subtitleSegments = [];
             
-            // Initialize share modal
-            initShareModal();
+            // Elements
+            const videoPlayer = document.getElementById('video-player');
+            const videoSource = document.getElementById('video-source');
+            const subtitleDisplay = document.getElementById('subtitle-display');
+            const subtitleLanguageSelect = document.getElementById('subtitle-language');
+            const subtitleToggle = document.getElementById('subtitle-toggle');
+            const processingOverlay = document.getElementById('processing-overlay');
+            const processingStatus = document.getElementById('processing-status');
+            const summaryContent = document.getElementById('summary-content');
+            const summaryProcessing = document.getElementById('summary-processing');
+            const transcriptContent = document.getElementById('transcript-content');
+            const transcriptLoading = document.getElementById('transcript-loading');
+            const copyLinkBtn = document.getElementById('copy-link');
+            const downloadBtn = document.getElementById('download-btn');
             
-            // Initialize subtitle toggle
-            initSubtitleToggle();
-
-            try {
-                // Fetch video data
-                const token = localStorage.getItem('access_token');
-                const type = localStorage.getItem('token_type');
-                
-                const response = await fetch(`/api/videos/${videoId}`, {
-                    headers: {
-                        'Authorization': `${type} ${token}`
+            // Load video data
+            async function loadVideoData() {
+                try {
+                    const response = await fetchWithAuth(`/api/videos/${videoId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to load video data');
                     }
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to fetch video data');
+                    
+                    videoData = await response.json();
+                    
+                    // Update video player
+                    document.title = `${videoData.title} - ClipSummary`;
+                    
+                    if (videoData.video_url) {
+                        videoSource.src = videoData.video_url;
+                        videoPlayer.load();
+                        processingOverlay.style.display = 'none';
+                    } else if (videoData.url) {
+                        // For YouTube videos
+                        // You would need to implement a YouTube player here
+                        // or display a message that direct playback isn't available
+                    }
+                    
+                    // Load available languages
+                    if (videoData.available_languages && videoData.available_languages.length > 0) {
+                        populateLanguageDropdown(videoData.available_languages);
+                        loadSubtitles(currentSubtitleLanguage);
+                    }
+                    
+                    // Load summary if available
+                    if (videoData.summary) {
+                        summaryProcessing.style.display = 'none';
+                        summaryContent.innerHTML = `<p>${videoData.summary}</p>`;
+                    } else {
+                        checkProcessingStatus();
+                    }
+                    
+                } catch (error) {
+                    console.error('Error loading video:', error);
+                    alert('Failed to load video. Please try again later.');
                 }
-
-                const data = await response.json();
-
-                // Set video title and source
-                const videoElement = document.getElementById('video-element');
-                document.getElementById('video-title').textContent = data.title;
-                document.title = `${data.title} | ClipSummary`;
+            }
+            
+            // Populate language dropdown
+            function populateLanguageDropdown(languages) {
+                subtitleLanguageSelect.innerHTML = '';
                 
-                if (data.video_url) {
-                    videoElement.src = data.video_url;
-                } else if (data.url && data.url.includes('youtube')) {
-                    // For YouTube videos, display thumbnail as placeholder
-                    const thumbnailUrl = `https://img.youtube.com/vi/${data.video_id}/hqdefault.jpg`;
-                    document.querySelector('.video-player').innerHTML = `
-                        <div class="youtube-container">
-                            <img src="${thumbnailUrl}" alt="${data.title}" class="youtube-thumbnail">
-                            <div class="youtube-info">
-                                <p><i class="fab fa-youtube"></i> YouTube video</p>
-                                <p><a href="${data.url}" target="_blank">Watch on YouTube</a></p>
-                            </div>
-                        </div>
-                        <div id="subtitle-display" class="subtitle-display"></div>
-                    `;
-                }
-
-                // Map language codes to readable names
-                const languageNames = {
-                    'en': 'English',
-                    'fr': 'French',
-                    'es': 'Spanish',
-                    'de': 'German',
-                    'it': 'Italian',
-                    'ja': 'Japanese',
-                    'ko': 'Korean',
-                    'zh': 'Chinese',
-                    'ru': 'Russian',
-                    'pt': 'Portuguese',
-                    'ar': 'Arabic',
-                    'hi': 'Hindi',
-                    'nl': 'Dutch',
-                    'sv': 'Swedish',
-                    'tr': 'Turkish',
-                    'pl': 'Polish',
-                    'vi': 'Vietnamese',
-                    'th': 'Thai'
-                };
-                
-                // Populate main language selector
-                const languageSelect = document.getElementById('language-select');
-                const subtitleLanguageSelect = document.getElementById('subtitle-language');
-                const availableLanguages = data.available_languages || ['en'];
-                
-                // Add language options to both selectors
-                availableLanguages.forEach(lang => {
-                    // Main language selector
+                languages.forEach(lang => {
                     const option = document.createElement('option');
                     option.value = lang;
-                    option.textContent = languageNames[lang] || lang;
-                    languageSelect.appendChild(option);
                     
-                    // Subtitle language selector
-                    const subOption = document.createElement('option');
-                    subOption.value = lang;
-                    subOption.textContent = languageNames[lang] || lang;
-                    subtitleLanguageSelect.appendChild(subOption);
+                    // Map language codes to names
+                    const langNames = {
+                        'en': 'English',
+                        'es': 'Spanish',
+                        'fr': 'French',
+                        'de': 'German',
+                        'it': 'Italian',
+                        'pt': 'Portuguese',
+                        'ru': 'Russian',
+                        'zh': 'Chinese',
+                        'ja': 'Japanese'
+                    };
+                    
+                    option.textContent = langNames[lang] || lang;
+                    subtitleLanguageSelect.appendChild(option);
                 });
-
-                // Default to English or first available language
-                let currentLang = 'en';
-                if (!availableLanguages.includes('en') && availableLanguages.length > 0) {
-                    currentLang = availableLanguages[0];
-                }
-                languageSelect.value = currentLang;
-                subtitleLanguageSelect.value = currentLang;
-
-                // Load initial summary
-                await loadSummary(videoId, currentLang);
-                
-                // Load initial transcript
-                await loadTranscript(videoId, currentLang);
-                
-                // Load subtitles
-                await loadSubtitles(videoId, currentLang);
-                
-                // Add language change event listener
-                languageSelect.addEventListener('change', async function() {
-                    const selectedLang = this.value;
-                    await loadSummary(videoId, selectedLang);
-                    await loadTranscript(videoId, selectedLang);
-                });
-                
-                // Add subtitle language change event listener
-                subtitleLanguageSelect.addEventListener('change', async function() {
-                    const selectedLang = this.value;
-                    await loadSubtitles(videoId, selectedLang);
-                });
-
-                // Set up copy link button
-                document.getElementById('copy-link').addEventListener('click', function() {
-                    const link = window.location.href;
-                    navigator.clipboard.writeText(link).then(() => {
-                        showToast('Link copied to clipboard!');
-                    });
-                });
-
-                // Set up download summary button
-                document.getElementById('download-summary').addEventListener('click', function() {
-                    const summaryText = document.getElementById('summary-text').innerText;
-                    const blob = new Blob([summaryText], { type: 'text/plain' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${data.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-summary.txt`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                });
-
-                // Set up save notes button
-                document.getElementById('save-notes').addEventListener('click', function() {
-                    const notes = document.getElementById('user-notes').value;
-                    localStorage.setItem(`notes-${videoId}`, notes);
-                    showToast('Notes saved successfully!');
-                });
-                
-                // Load existing notes if any
-                const savedNotes = localStorage.getItem(`notes-${videoId}`);
-                if (savedNotes) {
-                    document.getElementById('user-notes').value = savedNotes;
-                }
-
-                // Set up transcript segment click to seek video
-                document.addEventListener('click', function(e) {
-                    if (e.target.closest('.transcript-segment')) {
-                        const segment = e.target.closest('.transcript-segment');
-                        const startTime = parseFloat(segment.dataset.start);
-                        if (!isNaN(startTime) && videoElement) {
-                            videoElement.currentTime = startTime;
-                            videoElement.play();
-                        }
-                    }
-                });
-
-                // Set up video timeupdate for subtitle display and transcript highlighting
-                videoElement.addEventListener('timeupdate', function() {
-                    const currentTime = videoElement.currentTime;
-                    highlightCurrentTranscript(currentTime);
-                    updateSubtitleDisplay(currentTime);
-                });
-
-            } catch (error) {
-                console.error('Error:', error);
-                showError('Failed to load video: ' + error.message);
             }
-        });
-
-        async function loadSummary(videoId, lang) {
-            try {
-                const token = localStorage.getItem('access_token');
-                const type = localStorage.getItem('token_type');
-                
-                const response = await fetch(`/api/videos/${videoId}/summary/${lang}`, {
-                    headers: {
-                        'Authorization': `${type} ${token}`
+            
+            // Load subtitles for selected language
+            async function loadSubtitles(language) {
+                try {
+                    if (subtitles[language]) {
+                        // Already loaded
+                        subtitleSegments = subtitles[language].segments;
+                        return;
                     }
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to fetch summary');
+                    
+                    transcriptLoading.style.display = 'block';
+                    transcriptContent.innerHTML = '';
+                    
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/subtitles/${language}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to load subtitles for ${language}`);
+                    }
+                    
+                    const data = await response.json();
+                    subtitles[language] = data;
+                    subtitleSegments = data.segments;
+                    
+                    // Render transcript
+                    renderTranscript(subtitleSegments);
+                    
+                } catch (error) {
+                    console.error('Error loading subtitles:', error);
+                    transcriptContent.innerHTML = `<p>Failed to load subtitles for this language.</p>`;
                 }
-
-                const data = await response.json();
-                
-                // Update summary text
-                document.getElementById('summary-text').textContent = data.summary || 'No summary available for this language.';
-                
-            } catch (error) {
-                console.error('Error loading summary:', error);
-                document.getElementById('summary-text').textContent = 'Unable to load summary.';
             }
-        }
-
-        async function loadTranscript(videoId, lang) {
-            try {
-                const token = localStorage.getItem('access_token');
-                const type = localStorage.getItem('token_type');
+            
+            // Render transcript
+            function renderTranscript(segments) {
+                transcriptLoading.style.display = 'none';
                 
-                const response = await fetch(`/api/videos/${videoId}/transcript/${lang}`, {
-                    headers: {
-                        'Authorization': `${type} ${token}`
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to fetch transcript');
-                }
-
-                const data = await response.json();
-                
-                // Store the transcript segments globally for subtitle display
-                window.transcriptSegments = data.segments;
-                
-                // Get transcript container
-                const transcriptContainer = document.getElementById('transcript-container');
-                
-                // Check if we have segments
-                if (!data.segments || data.segments.length === 0) {
-                    transcriptContainer.innerHTML = '<p class="no-transcript">No transcript available for this language.</p>';
+                if (!segments || segments.length === 0) {
+                    transcriptContent.innerHTML = '<p>No transcript available for this video.</p>';
                     return;
                 }
                 
-                // Format time
-                function formatTime(seconds) {
-                    const mins = Math.floor(seconds / 60);
-                    const secs = Math.floor(seconds % 60);
-                    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                }
+                let transcriptHtml = '';
                 
-                // Generate transcript HTML
-                const showTimestamps = localStorage.getItem('show-transcript-times') !== 'false';
-                const transcriptHTML = data.segments.map(segment => `
-                    <div class="transcript-segment" data-start="${segment.start}" data-end="${segment.end}">
-                        ${showTimestamps ? `<span class="timestamp">${formatTime(segment.start)}</span>` : ''}
-                        <span class="segment-text">${segment.text}</span>
-                    </div>
-                `).join('');
-                
-                transcriptContainer.innerHTML = transcriptHTML;
-                
-                // Setup transcript copy button
-                document.getElementById('transcript-copy').addEventListener('click', function() {
-                    const text = data.segments.map(segment => segment.text).join(' ');
-                    navigator.clipboard.writeText(text).then(() => {
-                        showToast('Transcript copied to clipboard!');
-                    });
+                segments.forEach((segment, index) => {
+                    const startTime = formatTime(segment.start);
+                    const text = segment.text;
+                    
+                    transcriptHtml += `
+                        <div class="transcript-segment" data-start="${segment.start}" data-end="${segment.end}">
+                            <span class="transcript-timestamp">${startTime}</span>
+                            <span class="transcript-text">${text}</span>
+                        </div>
+                    `;
                 });
                 
-                // Setup transcript download button
-                document.getElementById('transcript-download').addEventListener('click', function() {
-                    const text = data.segments.map(segment => 
-                        `[${formatTime(segment.start)}] ${segment.text}`
-                    ).join('\n\n');
+                transcriptContent.innerHTML = transcriptHtml;
+                
+                // Add click event to transcript segments
+                const transcriptSegments = document.querySelectorAll('.transcript-segment');
+                transcriptSegments.forEach(segment => {
+                    segment.addEventListener('click', () => {
+                        const startTime = parseFloat(segment.dataset.start);
+                        videoPlayer.currentTime = startTime;
+                        videoPlayer.play();
+                    });
+                });
+            }
+            
+            // Format time for display
+            function formatTime(timeInSeconds) {
+                const minutes = Math.floor(timeInSeconds / 60);
+                const seconds = Math.floor(timeInSeconds % 60);
+                return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+            
+            // Check processing status for videos still being processed
+            async function checkProcessingStatus() {
+                if (videoData.status === 'processing') {
+                    processingOverlay.style.display = 'flex';
                     
-                    const blob = new Blob([text], { type: 'text/plain' });
-                    const url = URL.createObjectURL(blob);
+                    try {
+                        const response = await fetchWithAuth(`/api/upload/status/${videoId}`);
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            processingStatus.textContent = data.message || 'Processing your video...';
+                            
+                            if (data.status === 'completed') {
+                                // Refresh the page to show completed video
+                                window.location.reload();
+                                return;
+                            }
+                        }
+                        
+                        // Check again in 5 seconds
+                        setTimeout(checkProcessingStatus, 5000);
+                        
+                    } catch (error) {
+                        console.error('Error checking processing status:', error);
+                        setTimeout(checkProcessingStatus, 5000);
+                    }
+                }
+            }
+            
+            // Update subtitles based on video playback position
+            function updateSubtitles() {
+                if (!subtitleToggle.checked || subtitleSegments.length === 0) {
+                    subtitleDisplay.textContent = '';
+                    return;
+                }
+                
+                const currentTime = videoPlayer.currentTime;
+                
+                // Find the current subtitle segment
+                const currentSegment = subtitleSegments.find(segment => 
+                    currentTime >= segment.start && currentTime <= segment.end
+                );
+                
+                if (currentSegment) {
+                    subtitleDisplay.textContent = currentSegment.text;
+                } else {
+                    subtitleDisplay.textContent = '';
+                }
+            }
+            
+            // Event Listeners
+            subtitleLanguageSelect.addEventListener('change', (e) => {
+                currentSubtitleLanguage = e.target.value;
+                loadSubtitles(currentSubtitleLanguage);
+            });
+            
+            subtitleToggle.addEventListener('change', () => {
+                subtitleDisplay.style.visibility = subtitleToggle.checked ? 'visible' : 'hidden';
+            });
+            
+            videoPlayer.addEventListener('timeupdate', updateSubtitles);
+            
+            copyLinkBtn.addEventListener('click', () => {
+                const url = window.location.href;
+                navigator.clipboard.writeText(url);
+                alert('Link copied to clipboard');
+            });
+            
+            downloadBtn.addEventListener('click', () => {
+                if (videoData && videoData.video_url) {
                     const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `transcript-${videoId}-${lang}.txt`;
+                    a.href = videoData.video_url;
+                    a.download = videoData.title || 'video';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                });
-                
-            } catch (error) {
-                console.error('Error loading transcript:', error);
-                document.getElementById('transcript-container').innerHTML = 
-                    '<p class="transcript-error">Unable to load transcript.</p>';
-            }
-        }
-        
-        async function loadSubtitles(videoId, lang) {
-            try {
-                const token = localStorage.getItem('access_token');
-                const type = localStorage.getItem('token_type');
-                
-                const response = await fetch(`/api/videos/${videoId}/transcript/${lang}`, {
-                    headers: {
-                        'Authorization': `${type} ${token}`
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to fetch subtitles');
-                }
-
-                const data = await response.json();
-                
-                // Store the subtitles globally
-                window.subtitleData = data.segments;
-                
-                // If subtitles are toggled on, update the display
-                if (document.getElementById('subtitle-toggle').checked) {
-                    const videoElement = document.getElementById('video-element');
-                    if (videoElement) {
-                        updateSubtitleDisplay(videoElement.currentTime);
-                    }
-                }
-                
-            } catch (error) {
-                console.error('Error loading subtitles:', error);
-                showToast('Unable to load subtitles.');
-            }
-        }
-        
-        function updateSubtitleDisplay(currentTime) {
-            const subtitleDisplay = document.getElementById('subtitle-display');
-            const subtitleToggle = document.getElementById('subtitle-toggle');
-            
-            // If subtitles are toggled off, clear the display and return
-            if (!subtitleToggle || !subtitleToggle.checked) {
-                if (subtitleDisplay) subtitleDisplay.textContent = '';
-                return;
-            }
-            
-            // Check if we have subtitle data
-            if (!window.subtitleData || !subtitleDisplay) return;
-            
-            // Find the current subtitle segment
-            const currentSegment = window.subtitleData.find(segment => 
-                currentTime >= segment.start && currentTime <= segment.end
-            );
-            
-            // Update the display
-            if (currentSegment) {
-                subtitleDisplay.textContent = currentSegment.text;
-                subtitleDisplay.style.display = 'block';
-            } else {
-                subtitleDisplay.textContent = '';
-                subtitleDisplay.style.display = 'none';
-            }
-        }
-        
-        function highlightCurrentTranscript(currentTime) {
-            // Remove highlight from all segments
-            const allSegments = document.querySelectorAll('.transcript-segment');
-            allSegments.forEach(segment => segment.classList.remove('active'));
-            
-            // Find and highlight the current segment
-            const currentSegment = document.querySelector(
-                `.transcript-segment[data-start="${window.transcriptSegments?.find(
-                    seg => currentTime >= seg.start && currentTime <= seg.end
-                )?.start}"]`
-            );
-            
-            if (currentSegment) {
-                currentSegment.classList.add('active');
-                
-                // Auto-scroll if enabled
-                if (localStorage.getItem('auto-scroll') !== 'false') {
-                    currentSegment.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }
-        }
-
-        function initTabs() {
-            const tabButtons = document.querySelectorAll('.tab-btn');
-            const tabContents = document.querySelectorAll('.tab-content');
-            
-            tabButtons.forEach(button => {
-                button.addEventListener('click', () => {
-                    // Remove active class from all buttons and contents
-                    tabButtons.forEach(btn => btn.classList.remove('active'));
-                    tabContents.forEach(content => content.classList.remove('active'));
-                    
-                    // Add active class to clicked button and corresponding content
-                    button.classList.add('active');
-                    const tabId = button.getAttribute('data-tab');
-                    document.getElementById(`${tabId}-tab`).classList.add('active');
-                });
-            });
-        }
-
-        function initTranscriptControls() {
-            // Toggle between list and paragraph view
-            document.getElementById('transcript-list-view').addEventListener('click', function() {
-                document.getElementById('transcript-container').classList.remove('paragraph-view');
-                localStorage.setItem('transcript-view', 'list');
-            });
-            
-            document.getElementById('transcript-paragraph-view').addEventListener('click', function() {
-                document.getElementById('transcript-container').classList.add('paragraph-view');
-                localStorage.setItem('transcript-view', 'paragraph');
-            });
-            
-            // Toggle timestamps
-            document.getElementById('transcript-time-toggle').addEventListener('click', function() {
-                const timestamps = document.querySelectorAll('.timestamp');
-                const isVisible = timestamps.length > 0 && 
-                    window.getComputedStyle(timestamps[0]).display !== 'none';
-                
-                timestamps.forEach(ts => {
-                    ts.style.display = isVisible ? 'none' : 'inline-block';
-                });
-                
-                localStorage.setItem('show-transcript-times', !isVisible);
-            });
-            
-            // Toggle auto-scroll
-            let autoScroll = localStorage.getItem('auto-scroll') !== 'false';
-            const autoScrollBtn = document.getElementById('transcript-auto-scroll');
-            
-            if (autoScroll) {
-                autoScrollBtn.classList.add('active');
-            }
-            
-            autoScrollBtn.addEventListener('click', function() {
-                autoScroll = !autoScroll;
-                this.classList.toggle('active', autoScroll);
-                localStorage.setItem('auto-scroll', autoScroll);
-            });
-            
-            // Apply previous view settings if any
-            const savedView = localStorage.getItem('transcript-view');
-            if (savedView === 'paragraph') {
-                document.getElementById('transcript-container').classList.add('paragraph-view');
-            }
-        }
-        
-        function initShareModal() {
-            const modal = document.getElementById('share-modal');
-            const openBtn = document.getElementById('share-button');
-            const closeBtn = document.querySelector('.close-modal');
-            const shareLinkInput = document.getElementById('share-link-input');
-            const copyShareLinkBtn = document.getElementById('copy-share-link');
-            
-            // Set the share link
-            shareLinkInput.value = window.location.href;
-            
-            // Open modal
-            openBtn.addEventListener('click', function() {
-                modal.style.display = 'block';
-            });
-            
-            // Close modal
-            closeBtn.addEventListener('click', function() {
-                modal.style.display = 'none';
-            });
-            
-            // Close when clicking outside
-            window.addEventListener('click', function(event) {
-                if (event.target === modal) {
-                    modal.style.display = 'none';
+                } else {
+                    alert('Video is not available for download');
                 }
             });
             
-            // Copy share link
-            copyShareLinkBtn.addEventListener('click', function() {
-                shareLinkInput.select();
-                document.execCommand('copy');
-                showToast('Link copied to clipboard!');
-            });
-            
-            // Social share buttons
-            document.querySelector('.share-btn.twitter').addEventListener('click', function() {
-                const url = encodeURIComponent(window.location.href);
-                const text = encodeURIComponent(document.getElementById('video-title').textContent);
-                window.open(`https://twitter.com/intent/tweet?url=${url}&text=${text}`, '_blank');
-            });
-            
-            document.querySelector('.share-btn.facebook').addEventListener('click', function() {
-                const url = encodeURIComponent(window.location.href);
-                window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`, '_blank');
-            });
-            
-            document.querySelector('.share-btn.linkedin').addEventListener('click', function() {
-                const url = encodeURIComponent(window.location.href);
-                const title = encodeURIComponent(document.getElementById('video-title').textContent);
-                window.open(`https://www.linkedin.com/shareArticle?mini=true&url=${url}&title=${title}`, '_blank');
-            });
-            
-            document.querySelector('.share-btn.email').addEventListener('click', function() {
-                const url = window.location.href;
-                const title = document.getElementById('video-title').textContent;
-                window.location.href = `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(`Check out this video: ${title}\n\n${url}`)}`;
-            });
-        }
-        
-        function initSubtitleToggle() {
-            const subtitleToggle = document.getElementById('subtitle-toggle');
-            
-            // Load saved preference or default to on
-            const savedPreference = localStorage.getItem('subtitles-enabled');
-            subtitleToggle.checked = savedPreference !== 'false';
-            
-            // Handle toggle changes
-            subtitleToggle.addEventListener('change', function() {
-                localStorage.setItem('subtitles-enabled', this.checked);
-                
-                // Update subtitle display
-                const videoElement = document.getElementById('video-element');
-                if (videoElement) {
-                    updateSubtitleDisplay(videoElement.currentTime);
-                }
-            });
-        }
-
-        function updateAuthUI() {
-            const authLinks = document.querySelector('.auth-links');
-            
-            if (authLinks) {
-                authLinks.innerHTML = `
-                    <li><a href="/profile.html" class="btn btn-outline">My Videos</a></li>
-                    <li><a href="#" id="logout-link" class="btn">Logout</a></li>
-                `;
-                
-                document.getElementById('logout-link').addEventListener('click', function(e) {
-                    e.preventDefault();
-                    logout();
-                });
-            }
-        }
-
-        function logout() {
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('token_type');
-            window.location.href = '/';
-        }
-
-        function showError(message) {
-            const main = document.querySelector('main');
-            main.innerHTML = `
-                <div class="error-message">
-                    <i class="fas fa-exclamation-circle"></i>
-                    <h3>Error</h3>
-                    <p>${message}</p>
-                    <a href="/" class="btn btn-primary">Go Home</a>
-                </div>
-            `;
-        }
-
-        function showToast(message) {
-            const toast = document.getElementById('toast');
-            const toastMessage = document.getElementById('toast-message');
-            toastMessage.textContent = message;
-            
-            toast.classList.add('show');
-            
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 3000);
-        }
+            // Start loading
+            loadVideoData();
+        });
     </script>
 </body>
 </html>
