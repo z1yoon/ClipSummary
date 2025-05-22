@@ -23,7 +23,7 @@ yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
 
 # AI and ML dependencies
 numpy==1.24.3  # Pin NumPy to version before 2.0
-whisperx==3.1.1
+whisperx==3.3.3  # Updated from 3.1.1 to match official API
 torch==2.1.2
 transformers==4.37.2
 accelerate==0.25.0

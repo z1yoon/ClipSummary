@@ -103,7 +103,7 @@ def load_models():
         model_loading_state["progress"] = 50
         model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model..."
         
-        # Load the model with compatible parameters for WhisperX 3.1.1
+        # Load the model with simplified API for WhisperX 3.3.3
         asr_model = whisperx.load_model(
             DEFAULT_MODEL, 
             device, 
@@ -224,7 +224,8 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             
             try:
                 logger.info(f"[{upload_id}] Running speaker diarization...")
-                diarize_model = whisperx.diarize.DiarizationPipeline(
+                # Updated to use the 3.3.3 API for diarization
+                diarize_model = whisperx.DiarizationPipeline(
                     use_auth_token=HF_TOKEN,
                     device=device
                 )
