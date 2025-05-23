@@ -29,7 +29,7 @@ services:
       - ./backend:/app
       - backend-uploads:/app/uploads
       - backend-cache:/app/cache
-      - ./models:/root/.cache/huggingface
+      - ./models:/app/.cache/huggingface
     environment:
       - PYTHONUNBUFFERED=1
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
@@ -41,7 +41,8 @@ services:
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - MAX_UPLOAD_SIZE=10737418240
       - WHISPERX_DEVICE=cuda
-      - TRANSFORMERS_OFFLINE=1
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface
+      - HF_HOME=/app/.cache/huggingface
     env_file:
       - .env
     depends_on:

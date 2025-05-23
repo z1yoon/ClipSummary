@@ -22,6 +22,11 @@ DEFAULT_MODEL = "large-v2" if device == "cuda" else "medium"
 # Get HuggingFace token from environment variables for speaker diarization
 HF_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
 
+# Cache paths - both the local and repo_id versions for better compatibility
+MODEL_PATH = os.environ.get("TRANSFORMERS_CACHE", "/app/.cache/huggingface")
+MODEL_ID = "Systran/faster-whisper-large-v2"
+MODEL_DIR = os.path.join(MODEL_PATH, MODEL_ID.replace("/", "--"))
+
 # Global variable to store the ASR model once loaded
 asr_model = None
 
@@ -97,18 +102,30 @@ def load_models():
         
         # Progress updates
         model_loading_state["progress"] = 20
-        model_loading_state["message"] = "Downloading model files..."
+        model_loading_state["message"] = "Loading model files..."
         
-        # Load the actual model
+        # Load the actual model - first check if model is local
         model_loading_state["progress"] = 50
         model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model..."
         
-        # Load the model with simplified API for WhisperX 3.3.3
-        asr_model = whisperx.load_model(
-            DEFAULT_MODEL, 
-            device, 
-            compute_type=compute_type
-        )
+        # Check if model directory exists
+        if os.path.exists(MODEL_DIR):
+            logger.info(f"Loading WhisperX model from local cache: {MODEL_DIR}")
+            # Load the model with path to local directory
+            asr_model = whisperx.load_model(
+                MODEL_DIR, 
+                device, 
+                compute_type=compute_type,
+                local_files_only=True
+            )
+        else:
+            # Fall back to loading by model name (will download if needed)
+            logger.info(f"Loading WhisperX model by name: {DEFAULT_MODEL}")
+            asr_model = whisperx.load_model(
+                DEFAULT_MODEL, 
+                device, 
+                compute_type=compute_type
+            )
         
         model_loading_state["progress"] = 100
         model_loading_state["message"] = "Model loaded successfully"
@@ -154,13 +171,33 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
                 message="Loading WhisperX model..."
             )
         
-        # 1. Load model and transcribe
+        # 1. Load model and transcribe - prefer local cache
         logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL})...")
-        model = whisperx.load_model(
-            DEFAULT_MODEL, 
-            device, 
-            compute_type=compute_type
-        )
+        
+        try:
+            # First try loading from local model directory
+            if os.path.exists(MODEL_DIR):
+                logger.info(f"[{upload_id}] Loading WhisperX model from local cache: {MODEL_DIR}")
+                model = whisperx.load_model(
+                    MODEL_DIR,
+                    device, 
+                    compute_type=compute_type,
+                    local_files_only=True
+                )
+            else:
+                # Fall back to model name - offline will fail if not downloaded
+                logger.info(f"[{upload_id}] Loading WhisperX model by name: {DEFAULT_MODEL}")
+                model = whisperx.load_model(
+                    DEFAULT_MODEL, 
+                    device, 
+                    compute_type=compute_type
+                )
+        except Exception as e:
+            logger.error(f"[{upload_id}] Error loading model: {str(e)}")
+            # Add debug info
+            logger.info(f"[{upload_id}] Model directory exists: {os.path.exists(MODEL_DIR)}")
+            logger.info(f"[{upload_id}] Model directory contents: {os.listdir(MODEL_PATH) if os.path.exists(MODEL_PATH) else 'not accessible'}")
+            raise
         
         if upload_id:
             update_processing_status(

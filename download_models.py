@@ -1,155 +1,96 @@
 #!/usr/bin/env python3
+"""
+Model Downloader for ClipSummary
+
+This script downloads all the necessary models for the ClipSummary application:
+- WhisperX (Systran--faster-whisper-large-v2)
+- Summarizers (facebook--bart-large-cnn)
+- Translation models (Helsinki-NLP models)
+
+Models are saved to a "models" directory in the project root, which can be mounted
+in the Docker container.
+"""
+
 import os
 import sys
 import logging
-import subprocess
 from pathlib import Path
+from huggingface_hub import snapshot_download
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("model_downloader")
+logger = logging.getLogger(__name__)
 
-# Models to download
-MODELS = {
-    # WhisperX model
-    "transcription": [
-        "Systran/faster-whisper-large-v2"
-    ],
-    # Summarization model
-    "summarization": [
-        "facebook/bart-large-cnn"
-    ],
-    # Translation models
-    "translation": [
-        "Helsinki-NLP/opus-mt-en-ROMANCE",
-        "Helsinki-NLP/opus-mt-en-es",
-        "Helsinki-NLP/opus-mt-en-fr",
-        "Helsinki-NLP/opus-mt-en-de",
-        # English to Asian languages
-        "Helsinki-NLP/opus-mt-en-zh",
-        "Helsinki-NLP/opus-mt-en-ko",
-        # Asian languages to English
-        "Helsinki-NLP/opus-mt-zh-en",
-        "Helsinki-NLP/opus-mt-ko-en",
-        # Translations between Asian languages
-        "Helsinki-NLP/opus-mt-zh-ko",
-        "Helsinki-NLP/opus-mt-ko-zh",
-        # Other languages
-        "Helsinki-NLP/opus-mt-en-ru",
-        "Helsinki-NLP/opus-mt-en-ar"
-    ]
-}
-
-def install_dependencies():
-    """Install required dependencies for model downloading"""
-    logger.info("Installing required dependencies...")
-    
-    # List of required packages
-    packages = [
-        "torch",
-        "transformers",
-        "huggingface_hub",
-        "sentencepiece",
-        "protobuf",
-        "faster-whisper",
-    ]
-    
-    # Install each package
-    for package in packages:
-        try:
-            logger.info(f"Installing {package}...")
-            subprocess.check_call([
-                sys.executable, "-m", "pip", "install", package
-            ])
-            logger.info(f"✅ Successfully installed {package}")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Failed to install {package}: {str(e)}")
-            if package == "sentencepiece":
-                logger.info("Attempting to install sentencepiece with additional dependencies...")
-                try:
-                    # On some systems, sentencepiece requires additional setup
-                    subprocess.check_call([
-                        sys.executable, "-m", "pip", "install", "sentencepiece", "--no-binary", "sentencepiece"
-                    ])
-                    logger.info("✅ Successfully installed sentencepiece from source")
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"❌ Failed to install sentencepiece from source: {str(e)}")
+# Define models to download
+MODELS = [
+    "Systran/faster-whisper-large-v2",   # WhisperX ASR model
+    "facebook/bart-large-cnn",           # Summarization model
+    "Helsinki-NLP/opus-mt-en-zh",        # English to Chinese translation
+    "Helsinki-NLP/opus-mt-zh-en",        # Chinese to English translation
+    "Helsinki-NLP/opus-mt-ko-en",        # Korean to English translation
+    "Helsinki-NLP/opus-mt-mul-en",       # Multi-language to English translation
+]
 
 def download_model(model_id, output_dir):
-    """Download a model using huggingface_hub snapshot_download"""
+    """
+    Download a model from the Hugging Face Hub
+    
+    Args:
+        model_id: Model identifier (e.g., "Systran/faster-whisper-large-v2")
+        output_dir: Directory to save the model
+    """
+    logger.info(f"Downloading {model_id}...")
+    
+    # Convert model IDs with slashes to directory-friendly names
+    model_dir_name = model_id.replace("/", "--")
+    model_dir = os.path.join(output_dir, model_dir_name)
+    
     try:
-        # Import here after dependencies are installed
-        from huggingface_hub import snapshot_download
+        # Create directory if it doesn't exist
+        os.makedirs(model_dir, exist_ok=True)
         
-        logger.info(f"Downloading model: {model_id}")
-        
-        # Create a directory for this model
-        model_dir = output_dir / model_id.replace("/", "--")
-        model_dir.mkdir(exist_ok=True, parents=True)
-        
-        # Download the model
+        # Download model
         snapshot_download(
             repo_id=model_id,
-            local_dir=str(model_dir),
-            local_dir_use_symlinks=False
+            local_dir=model_dir,
+            local_dir_use_symlinks=False  # Important for Docker volume mounts
         )
         
-        logger.info(f"✅ Successfully downloaded {model_id}")
+        logger.info(f"✓ Successfully downloaded {model_id} to {model_dir}")
         return True
+        
     except Exception as e:
-        logger.error(f"❌ Error downloading {model_id}: {str(e)}")
+        logger.error(f"Failed to download {model_id}: {str(e)}")
         return False
 
 def main():
-    """Main function to download all models"""
-    # First install required dependencies
-    install_dependencies()
-    
-    # Create models directory in the current working directory
+    """Main execution function"""
+    # Create models directory in the project root
     script_dir = Path(__file__).resolve().parent
     models_dir = script_dir / "models"
-    models_dir.mkdir(exist_ok=True)
     
-    # Set environment variables for Hugging Face
-    os.environ["HF_HOME"] = str(models_dir)
-    os.environ["TRANSFORMERS_CACHE"] = str(models_dir)
-    os.environ["HUGGINGFACE_HUB_CACHE"] = str(models_dir)
+    # Ensure the models directory exists
+    os.makedirs(models_dir, exist_ok=True)
     
-    logger.info(f"Using models directory: {models_dir}")
+    logger.info(f"Downloading models to {models_dir}")
     
-    # Download models
-    total_models = sum(len(models) for models in MODELS.values())
-    successful_downloads = 0
+    # Download all models
+    success_count = 0
+    for model_id in MODELS:
+        if download_model(model_id, models_dir):
+            success_count += 1
     
-    # Download each model
-    for model_type, model_list in MODELS.items():
-        logger.info(f"\n=== Downloading {model_type} models ===")
-        for model_id in model_list:
-            success = download_model(model_id, models_dir)
-            if success:
-                successful_downloads += 1
-    
-    # Print summary
-    logger.info("\n=== Download Summary ===")
-    logger.info(f"Total models: {total_models}")
-    logger.info(f"Successfully downloaded: {successful_downloads}")
-    logger.info(f"Failed: {total_models - successful_downloads}")
-    
-    if successful_downloads == total_models:
-        logger.info("\n✨ All models downloaded successfully!")
+    # Report results
+    logger.info(f"Downloaded {success_count}/{len(MODELS)} models successfully")
+    if success_count < len(MODELS):
+        logger.warning("Some models failed to download. Check the logs above for details.")
+        sys.exit(1)
     else:
-        logger.warning(f"\n⚠️ {total_models - successful_downloads} models failed to download.")
-    
-    # Print instructions for Docker
-    logger.info("\n=== How to Use ===")
-    logger.info("1. The models have been downloaded to the './models' directory")
-    logger.info("2. This directory is mounted to '/root/.cache/huggingface' in the Docker container")
-    logger.info("3. When running in offline mode (TRANSFORMERS_OFFLINE=1), the models will be loaded from this directory")
-    logger.info("4. Restart your Docker containers with: docker-compose down && docker-compose up -d")
+        logger.info("All models downloaded successfully!")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

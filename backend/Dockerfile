@@ -17,11 +17,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application
 COPY . .
 
-# Create uploads directory
-RUN mkdir -p uploads
+# Create necessary directories
+RUN mkdir -p uploads cache .cache/huggingface
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+ENV HF_HOME=/app/.cache/huggingface
+
+# Set permissions for directories that need write access
+RUN chmod 777 uploads cache .cache/huggingface
 
 # Create a non-root user
 RUN useradd -m appuser && chown -R appuser:appuser /app
