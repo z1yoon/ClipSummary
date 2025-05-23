@@ -23,7 +23,7 @@ ffmpeg-python==0.2.0
 yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
 
 # AI and ML dependencies (PyTorch installed separately in Dockerfile)
-numpy>=1.24.0,<2.0.0  # Pin numpy version for compatibility
+numpy>=2.0.2  # Updated to match WhisperX requirements
 whisperx==3.3.3
 transformers>=4.48.0
 accelerate==0.25.0
