@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
@@ -24,6 +24,9 @@ RUN mkdir -p uploads cache .cache/huggingface
 ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
+
+# Disable TRANSFORMERS_OFFLINE to allow downloads if needed
+ENV TRANSFORMERS_OFFLINE=0
 
 # Set permissions for directories that need write access
 RUN chmod 777 uploads cache .cache/huggingface

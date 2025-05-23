@@ -40,9 +40,12 @@ services:
       - JWT_ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - MAX_UPLOAD_SIZE=10737418240
-      - WHISPERX_DEVICE=cuda
+      - WHISPERX_DEVICE=${WHISPERX_DEVICE:-cuda}
       - TRANSFORMERS_CACHE=/app/.cache/huggingface
       - HF_HOME=/app/.cache/huggingface
+      - TRANSFORMERS_OFFLINE=0  # Allow downloading if needed
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512  # Prevent CUDA OOM errors
+      - CUDA_VISIBLE_DEVICES=0  # Use first GPU
     env_file:
       - .env
     depends_on:
@@ -54,7 +57,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [gpu, compute, utility]
 
   redis:
     image: redis:alpine

@@ -12,9 +12,32 @@ from utils.cache import update_processing_status
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Set device and compute type
-device = "cuda" if torch.cuda.is_available() else "cpu"
-compute_type = "float16" if device == "cuda" else "int8"
+# Check CUDA availability and capabilities
+try:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        compute_capability = torch.cuda.get_device_capability()
+        torch_version = torch.__version__
+        cuda_version = torch.version.cuda
+        logger.info(f"CUDA available: device={torch.cuda.get_device_name(0)}, "
+                   f"compute capability={compute_capability}, "
+                   f"torch={torch_version}, CUDA={cuda_version}")
+        
+        # Check if compute capability is supported
+        compute_type = "float16"
+    else:
+        logger.warning("CUDA not available, using CPU")
+        compute_type = "int8"
+except Exception as e:
+    logger.warning(f"Error checking CUDA capabilities: {str(e)}, falling back to CPU")
+    device = "cpu"
+    compute_type = "int8"
+
+# Fall back to CPU if needed
+if os.environ.get("WHISPERX_DEVICE", "").lower() == "cpu":
+    logger.info("Forcing CPU usage based on environment variable")
+    device = "cpu"
+    compute_type = "int8"
 
 # Default model size - balance between accuracy and performance
 DEFAULT_MODEL = "large-v2" if device == "cuda" else "medium"
@@ -109,30 +132,58 @@ def load_models():
         model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model..."
         
         # Check if model directory exists
-        if os.path.exists(MODEL_DIR):
+        if os.path.exists(MODEL_DIR) and not os.environ.get("TRANSFORMERS_OFFLINE", "0") == "0":
             logger.info(f"Loading WhisperX model from local cache: {MODEL_DIR}")
-            # Load the model with path to local directory
-            asr_model = whisperx.load_model(
-                MODEL_DIR, 
-                device, 
-                compute_type=compute_type,
-                local_files_only=True
-            )
+            try:
+                # Load the model with path to local directory
+                asr_model = whisperx.load_model(
+                    MODEL_DIR, 
+                    device, 
+                    compute_type=compute_type,
+                    local_files_only=True
+                )
+            except Exception as local_error:
+                logger.warning(f"Failed to load model from local cache: {str(local_error)}")
+                logger.info("Attempting to download model...")
+                # Try downloading the model (requires TRANSFORMERS_OFFLINE=0)
+                asr_model = whisperx.load_model(
+                    DEFAULT_MODEL, 
+                    device, 
+                    compute_type=compute_type,
+                    local_files_only=False
+                )
         else:
             # Fall back to loading by model name (will download if needed)
             logger.info(f"Loading WhisperX model by name: {DEFAULT_MODEL}")
-            asr_model = whisperx.load_model(
-                DEFAULT_MODEL, 
-                device, 
-                compute_type=compute_type
-            )
+            
+            # If we're encountering CUDA issues, fall back to CPU
+            try:
+                asr_model = whisperx.load_model(
+                    DEFAULT_MODEL, 
+                    device, 
+                    compute_type=compute_type,
+                    local_files_only=False
+                )
+            except RuntimeError as cuda_error:
+                if "CUDA" in str(cuda_error):
+                    logger.warning(f"CUDA error loading model, falling back to CPU: {str(cuda_error)}")
+                    device = "cpu"
+                    compute_type = "int8"
+                    asr_model = whisperx.load_model(
+                        DEFAULT_MODEL, 
+                        device, 
+                        compute_type=compute_type,
+                        local_files_only=False
+                    )
+                else:
+                    raise
         
         model_loading_state["progress"] = 100
         model_loading_state["message"] = "Model loaded successfully"
         
         # Log completion
         total_time = time.time() - model_loading_state["start_time"]
-        logger.info(f"WhisperX model loaded successfully in {total_time:.2f}s")
+        logger.info(f"WhisperX model loaded successfully in {total_time:.2f}s on {device}")
         
     except Exception as e:
         logger.error(f"Failed to load WhisperX model: {str(e)}")
@@ -172,26 +223,48 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             )
         
         # 1. Load model and transcribe - prefer local cache
-        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL})...")
+        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL}) on {device}...")
         
         try:
             # First try loading from local model directory
-            if os.path.exists(MODEL_DIR):
-                logger.info(f"[{upload_id}] Loading WhisperX model from local cache: {MODEL_DIR}")
+            model = None
+            use_cpu_fallback = False
+            
+            try:
+                if os.path.exists(MODEL_DIR):
+                    logger.info(f"[{upload_id}] Loading WhisperX model from local cache: {MODEL_DIR}")
+                    model = whisperx.load_model(
+                        MODEL_DIR,
+                        device, 
+                        compute_type=compute_type,
+                        local_files_only=False
+                    )
+                else:
+                    # Fall back to model name - offline will fail if not downloaded
+                    logger.info(f"[{upload_id}] Loading WhisperX model by name: {DEFAULT_MODEL}")
+                    model = whisperx.load_model(
+                        DEFAULT_MODEL, 
+                        device, 
+                        compute_type=compute_type,
+                        local_files_only=False
+                    )
+            except RuntimeError as e:
+                if "CUDA" in str(e):
+                    logger.warning(f"[{upload_id}] CUDA error: {str(e)}")
+                    logger.info(f"[{upload_id}] Falling back to CPU for transcription")
+                    use_cpu_fallback = True
+                else:
+                    raise
+                    
+            # Fall back to CPU if CUDA failed
+            if use_cpu_fallback:
                 model = whisperx.load_model(
-                    MODEL_DIR,
-                    device, 
-                    compute_type=compute_type,
-                    local_files_only=True
+                    DEFAULT_MODEL,
+                    "cpu",
+                    compute_type="int8",
+                    local_files_only=False
                 )
-            else:
-                # Fall back to model name - offline will fail if not downloaded
-                logger.info(f"[{upload_id}] Loading WhisperX model by name: {DEFAULT_MODEL}")
-                model = whisperx.load_model(
-                    DEFAULT_MODEL, 
-                    device, 
-                    compute_type=compute_type
-                )
+                
         except Exception as e:
             logger.error(f"[{upload_id}] Error loading model: {str(e)}")
             # Add debug info
@@ -232,13 +305,21 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
         
         # 2. Align whisper output
         logger.info(f"[{upload_id}] Loading alignment model...")
-        model_a, metadata = whisperx.load_align_model(language_code=language_code, device=device)
+        try:
+            model_a, metadata = whisperx.load_align_model(language_code=language_code, device=device)
+        except RuntimeError as e:
+            if "CUDA" in str(e):
+                logger.warning(f"[{upload_id}] CUDA error loading alignment model, falling back to CPU")
+                model_a, metadata = whisperx.load_align_model(language_code=language_code, device="cpu")
+            else:
+                raise
+                
         result = whisperx.align(
             result["segments"],
             model_a,
             metadata,
             audio,
-            device,
+            device if model_a.device.type == "cuda" else "cpu",  # Use same device as model
             return_char_alignments=False
         )
         logger.info(f"[{upload_id}] Alignment complete")
@@ -261,11 +342,24 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             
             try:
                 logger.info(f"[{upload_id}] Running speaker diarization...")
-                # Updated to use the 3.3.3 API for diarization
-                diarize_model = whisperx.DiarizationPipeline(
-                    use_auth_token=HF_TOKEN,
-                    device=device
-                )
+                # Try CPU if CUDA is problematic
+                diarize_device = device
+                try:
+                    # Updated to use the 3.3.3 API for diarization
+                    diarize_model = whisperx.DiarizationPipeline(
+                        use_auth_token=HF_TOKEN,
+                        device=diarize_device
+                    )
+                except RuntimeError as e:
+                    if "CUDA" in str(e):
+                        logger.warning(f"[{upload_id}] CUDA error in diarization, falling back to CPU")
+                        diarize_device = "cpu"
+                        diarize_model = whisperx.DiarizationPipeline(
+                            use_auth_token=HF_TOKEN,
+                            device=diarize_device
+                        )
+                    else:
+                        raise
                 
                 # Run diarization
                 diarize_segments = diarize_model(audio)
