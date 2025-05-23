@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Initialize critical variables with safe defaults
 device = "cpu"  # Default to CPU as the safest option
 compute_type = "int8"  # Default to int8 for CPU
-DEFAULT_MODEL = "medium"  # Default to medium model for CPU
+DEFAULT_MODEL = "large-v2"  # Always use large-v2 model as requested
 
 # Check CUDA availability and capabilities
 try:
@@ -30,7 +30,6 @@ try:
         
         # Check if compute capability is supported
         compute_type = "float16"
-        DEFAULT_MODEL = "large-v2"  # Use larger model for GPU
     else:
         logger.warning("CUDA not available, using CPU")
         compute_type = "int8"
@@ -44,7 +43,6 @@ if os.environ.get("WHISPERX_DEVICE", "").lower() == "cpu":
     logger.info("Forcing CPU usage based on environment variable")
     device = "cpu"
     compute_type = "int8"
-    DEFAULT_MODEL = "medium"
 
 # Get HuggingFace token from environment variables for speaker diarization
 HF_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -105,8 +103,7 @@ def load_models():
     This function loads the ASR model and sets the global asr_model variable.
     It uses a lock to prevent multiple threads from loading the model simultaneously.
     """
-    global asr_model
-    global model_loading_state
+    global asr_model, model_loading_state, device, compute_type
     
     # If model is already loaded, nothing to do
     if asr_model is not None:
@@ -171,6 +168,7 @@ def load_models():
             except RuntimeError as cuda_error:
                 if "CUDA" in str(cuda_error):
                     logger.warning(f"CUDA error loading model, falling back to CPU: {str(cuda_error)}")
+                    # We need to modify the global device and compute_type variables
                     device = "cpu"
                     compute_type = "int8"
                     asr_model = whisperx.load_model(
