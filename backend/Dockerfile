@@ -1,12 +1,8 @@
-# Stage 1: Base with CUDA 12.4 development support for RTX 5090
-FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS base
+# Use official PyTorch image with CUDA 12.8 support for RTX 5090/5080
+FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
 
-# Install Python and essential tools
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-venv \
-    python3-pip \
-    python3.10-dev \
     ffmpeg \
     git \
     wget \
@@ -15,46 +11,23 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.10 as default python
-RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
-    ln -sf /usr/bin/python3.10 /usr/bin/python3
-
-# Create and activate virtual environment
-ENV VIRTUAL_ENV=/opt/venv
-RUN python -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-# Upgrade pip
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
-# Stage 2: Dependencies
-FROM base AS dependencies
-
 WORKDIR /app
 
-# Set non-interactive frontend to avoid timezone prompt
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Singapore
-
-# Set CUDA environment variables for RTX 5090
+# Set environment variables for RTX 5090
 ENV CUDA_VISIBLE_DEVICES=0
-ENV TORCH_CUDA_ARCH_LIST="5.0;6.0;7.0;7.5;8.0;8.6;9.0;12.0"
-ENV CUDA_MODULE_LOADING=LAZY
-ENV CUDA_LAUNCH_BLOCKING=0
+ENV PYTHONUNBUFFERED=1
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+ENV HF_HOME=/app/.cache/huggingface
+ENV TRANSFORMERS_OFFLINE=0
 
 # Copy requirements file
 COPY requirements.txt .
 
-# Install all dependencies from requirements.txt
+# Install Python dependencies (PyTorch is already included in base image)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Verify RTX 5090 CUDA compatibility
 RUN python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('CUDA version:', torch.version.cuda); print('PyTorch version:', torch.__version__); print('Device capability:', torch.cuda.get_device_capability(0) if torch.cuda.is_available() else 'N/A'); print('Device name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
-
-# Stage 3: Runtime
-FROM dependencies AS runtime
-
-WORKDIR /app
 
 # Copy application files
 COPY ./ai ./ai
@@ -69,15 +42,6 @@ COPY ./logging.conf ./
 # Create necessary directories
 RUN mkdir -p uploads cache .cache/huggingface/hub && \
     chmod -R 777 uploads cache .cache
-
-# Set environment variables for optimal RTX 5090 performance
-ENV PYTHONUNBUFFERED=1
-ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
-ENV HF_HOME=/app/.cache/huggingface
-ENV TRANSFORMERS_OFFLINE=0
-ENV CUDA_VISIBLE_DEVICES=0
-ENV TORCH_CUDA_ARCH_LIST="5.0;6.0;7.0;7.5;8.0;8.6;9.0;12.0"
-ENV CUDA_MODULE_LOADING=LAZY
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]

@@ -20,6 +20,31 @@ DEFAULT_COMPUTE_TYPE = "float16"
 # Force CUDA visible devices to ensure GPU is used
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+# RTX 5090 compatibility workarounds
+def apply_rtx5090_workarounds():
+    """Apply RTX 5090 compatibility workarounds"""
+    try:
+        # Force PTX JIT compilation for missing kernels
+        os.environ["CUDA_FORCE_PTX_JIT"] = "1"
+        
+        # Disable problematic CUDA features for RTX 5090
+        if torch.cuda.is_available():
+            # Disable math SDP and flash attention which may not work on RTX 5090
+            torch.backends.cuda.enable_math_sdp(False)
+            torch.backends.cuda.enable_flash_sdp(False)
+            
+            # Set memory allocation strategy
+            torch.cuda.set_per_process_memory_fraction(0.9)
+            
+            logger.info("RTX 5090 compatibility workarounds applied")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to apply RTX 5090 workarounds: {e}")
+        return False
+
+# Apply workarounds at module import
+apply_rtx5090_workarounds()
+
 # Verify CUDA is available and working with RTX 5090
 def verify_rtx5090_cuda():
     """Verify CUDA works properly with RTX 5090 - warn but don't fail if issues"""
@@ -31,13 +56,16 @@ def verify_rtx5090_cuda():
     if "RTX 5090" not in device_name:
         logger.warning(f"Expected RTX 5090 but found: {device_name}")
     
-    # Test CUDA functionality - warn but don't crash on startup
+    # Test CUDA functionality with RTX 5090 workarounds
     try:
-        test_tensor = torch.tensor([1.0, 2.0, 3.0]).cuda()
-        result = test_tensor * 2
-        assert result.is_cuda, "Tensor not on CUDA device"
-        del test_tensor, result
-        torch.cuda.empty_cache()
+        # Force JIT compilation for missing kernels
+        with torch.cuda.device(0):
+            test_tensor = torch.tensor([1.0, 2.0, 3.0], device='cuda', dtype=torch.float32)
+            result = test_tensor * 2
+            assert result.is_cuda, "Tensor not on CUDA device"
+            del test_tensor, result
+            torch.cuda.empty_cache()
+        
         logger.info(f"RTX 5090 CUDA verification successful: {device_name}")
         return True
     except Exception as e:

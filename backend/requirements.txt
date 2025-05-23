@@ -3,14 +3,14 @@ fastapi==0.104.0
 uvicorn==0.23.2
 python-multipart==0.0.6
 pydantic==2.4.2
-email-validator==2.1.0  # Required for Pydantic email validation
+email-validator==2.1.0
 httpx==0.25.0
 python-dotenv==1.0.0
 
 # Authentication and security
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
-bcrypt==3.2.2  # Downgraded for compatibility with passlib
+bcrypt==3.2.2
 
 # Database and caching
 redis==5.0.1
@@ -20,25 +20,19 @@ alembic==1.13.1
 
 # Media processing
 ffmpeg-python==0.2.0
-yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
+yt-dlp>=2023.12.30
 
-# PyTorch with CUDA 12.4 support for RTX 5090
---extra-index-url https://download.pytorch.org/whl/nightly/cu124
---pre
-torch
-torchvision
---extra-index-url https://pypi.org/simple/
-torchaudio
+# Scientific computing dependencies for pyannote.audio
+numpy>=2.0.2
+matplotlib>=3.5.0
+scipy>=1.9.0
+scikit-learn>=1.1.0
 
-# AI and ML dependencies (PyTorch installed separately in Dockerfile)
-numpy>=2.0.2  # Updated to match WhisperX requirements
-matplotlib>=3.5.0  # Added for pyannote.audio compatibility
-scipy>=1.9.0  # Added for pyannote.audio compatibility
-scikit-learn>=1.1.0  # Added for pyannote.audio compatibility
+# AI and ML dependencies (PyTorch already in base image)
 whisperx==3.3.3
 transformers>=4.48.0
 accelerate==0.25.0
 
-# Speaker diarization with compatible versions
-pyannote.audio>=3.3.2  # Updated to match WhisperX requirements
-speechbrain>=0.5.12  # Ensure speechbrain compatibility
+# Speaker diarization with compatible versions  
+pyannote.audio>=3.3.2
+speechbrain>=0.5.12
