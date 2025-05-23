@@ -12,66 +12,53 @@ from utils.cache import update_processing_status
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Set fixed values to avoid any reference errors
+# Force GPU usage - no fallbacks
 DEFAULT_MODEL = "large-v2"
+DEFAULT_DEVICE = "cuda"
 DEFAULT_COMPUTE_TYPE = "float16"
 
 # Force CUDA visible devices to ensure GPU is used
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-# Improved CUDA detection and device selection
-def detect_best_device():
-    """Detect the best available device for computation"""
+# Verify CUDA is available and working with RTX 5090
+def verify_rtx5090_cuda():
+    """Verify CUDA works properly with RTX 5090 - fail if not working"""
     if not torch.cuda.is_available():
-        logger.warning("CUDA is not available - using CPU")
-        return "cpu", "int8"
+        raise RuntimeError("CUDA is not available! RTX 5090 requires CUDA support.")
     
+    device_name = torch.cuda.get_device_name(0)
+    if "RTX 5090" not in device_name:
+        logger.warning(f"Expected RTX 5090 but found: {device_name}")
+    
+    # Test CUDA functionality
     try:
-        # Test if CUDA actually works with a simple operation
-        test_tensor = torch.tensor([1.0, 2.0, 3.0])
-        test_result = test_tensor.cuda()
-        _ = test_result * 2  # Simple operation to verify CUDA works
-        del test_tensor, test_result
+        test_tensor = torch.tensor([1.0, 2.0, 3.0]).cuda()
+        result = test_tensor * 2
+        assert result.is_cuda, "Tensor not on CUDA device"
+        del test_tensor, result
         torch.cuda.empty_cache()
-        
-        device_name = torch.cuda.get_device_name(0)
-        logger.info(f"CUDA test successful - using GPU: {device_name}")
-        return "cuda", "float16"
-        
+        logger.info(f"RTX 5090 CUDA verification successful: {device_name}")
     except Exception as e:
-        logger.warning(f"CUDA test failed: {str(e)}")
-        logger.info("CUDA is available but not working properly - falling back to CPU")
-        return "cpu", "int8"
+        raise RuntimeError(f"RTX 5090 CUDA test failed: {str(e)}")
 
-# Detect the best device at startup
-DEFAULT_DEVICE, DEFAULT_COMPUTE_TYPE = detect_best_device()
+# Verify RTX 5090 CUDA at startup
+verify_rtx5090_cuda()
 
 # Log configuration
 logger.info(f"WhisperX configured with: model={DEFAULT_MODEL}, device={DEFAULT_DEVICE}")
 
-# More detailed CUDA check
-if torch.cuda.is_available():
-    try:
-        device_name = torch.cuda.get_device_name(0)
-        cuda_version = torch.version.cuda
-        torch_version = torch.__version__
-        device_count = torch.cuda.device_count()
-        current_device = torch.cuda.current_device()
-        
-        logger.info(f"CUDA is available: {device_count} device(s)")
-        logger.info(f"Current CUDA device: {current_device} - {device_name}")
-        logger.info(f"CUDA version: {cuda_version}, PyTorch: {torch_version}")
-        
-        # Check if this is an RTX 5090 with potential compatibility issues
-        if "RTX 5090" in device_name:
-            logger.warning("RTX 5090 detected - checking CUDA compatibility...")
-            logger.info("If you encounter CUDA errors, the PyTorch version may need updating")
-        
-    except Exception as e:
-        logger.error(f"Error during CUDA verification: {str(e)}")
-        logger.info("Will fall back to CPU processing")
-else:
-    logger.warning("CUDA NOT AVAILABLE - using CPU processing")
+# Detailed CUDA information
+device_name = torch.cuda.get_device_name(0)
+cuda_version = torch.version.cuda
+torch_version = torch.__version__
+device_count = torch.cuda.device_count()
+current_device = torch.cuda.current_device()
+capability = torch.cuda.get_device_capability(0)
+
+logger.info(f"CUDA device count: {device_count}")
+logger.info(f"Current CUDA device: {current_device} - {device_name}")
+logger.info(f"CUDA version: {cuda_version}, PyTorch: {torch_version}")
+logger.info(f"Device compute capability: {capability[0]}.{capability[1]}")
 
 # Get HuggingFace token from environment variables for speaker diarization
 HF_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -126,20 +113,13 @@ def wait_for_model(timeout=300):
     return False  # Timeout
 
 def load_models():
-    """
-    Load WhisperX models into memory
-    
-    This function loads the ASR model and sets the global asr_model variable.
-    It uses a lock to prevent multiple threads from loading the model simultaneously.
-    """
+    """Load WhisperX models into memory - GPU only, no fallbacks"""
     global asr_model, model_loading_state
     
-    # If model is already loaded, nothing to do
     if asr_model is not None:
         logger.info("WhisperX model is already loaded")
         return
     
-    # Use a lock to prevent multiple threads from loading simultaneously
     acquired = model_loading_lock.acquire(blocking=False)
     if not acquired:
         logger.info("Another thread is already loading the WhisperX model")
@@ -153,131 +133,70 @@ def load_models():
         
         logger.info(f"Loading WhisperX model ({DEFAULT_MODEL}) on {DEFAULT_DEVICE}...")
         
-        # Progress updates
-        model_loading_state["progress"] = 20
-        model_loading_state["message"] = "Loading model files..."
-        
-        # Load the actual model
         model_loading_state["progress"] = 50
-        model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model..."
+        model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model on GPU..."
         
-        try:
-            # Try with GPU first
-            logger.info(f"Attempting to load model with GPU")
-            asr_model = whisperx.load_model(
-                DEFAULT_MODEL, 
-                DEFAULT_DEVICE, 
-                compute_type=DEFAULT_COMPUTE_TYPE,
-                local_files_only=False
-            )
-            logger.info("Successfully loaded model with GPU")
-        except Exception as e:
-            # If GPU fails, try CPU
-            logger.warning(f"GPU load failed: {str(e)}")
-            logger.info("Falling back to CPU")
-            try:
-                asr_model = whisperx.load_model(
-                    DEFAULT_MODEL, 
-                    "cpu", 
-                    compute_type="int8",
-                    local_files_only=False
-                )
-                logger.info("Successfully loaded model with CPU")
-            except Exception as cpu_e:
-                logger.error(f"CPU load also failed: {str(cpu_e)}")
-                raise
-            
+        # Load model on GPU only - no CPU fallback
+        asr_model = whisperx.load_model(
+            DEFAULT_MODEL, 
+            DEFAULT_DEVICE, 
+            compute_type=DEFAULT_COMPUTE_TYPE,
+            local_files_only=False
+        )
+        
         model_loading_state["progress"] = 100
-        model_loading_state["message"] = "Model loaded successfully"
+        model_loading_state["message"] = "Model loaded successfully on GPU"
         
-        # Log completion
         total_time = time.time() - model_loading_state["start_time"]
-        logger.info(f"WhisperX model loaded successfully in {total_time:.2f}s")
+        logger.info(f"WhisperX model loaded successfully on GPU in {total_time:.2f}s")
         
     except Exception as e:
-        logger.error(f"Failed to load WhisperX model: {str(e)}")
+        logger.error(f"Failed to load WhisperX model on GPU: {str(e)}")
         model_loading_state["progress"] = 0
-        model_loading_state["message"] = f"Error: {str(e)}"
+        model_loading_state["message"] = f"GPU Error: {str(e)}"
+        raise RuntimeError(f"GPU model loading failed: {str(e)}")
     finally:
         model_loading_state["is_loading"] = False
         model_loading_lock.release()
 
 def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = True) -> Dict[str, Any]:
-    """
-    Transcribe audio using WhisperX with word-level timestamps and speaker diarization
-    
-    Args:
-        audio_path: Path to audio file
-        upload_id: Optional upload ID for progress tracking
-        diarize: Whether to perform speaker diarization
-        
-    Returns:
-        Dict containing transcription results with timestamps and speaker labels
-    """
+    """Transcribe audio using WhisperX with GPU only - no CPU fallbacks"""
     try:
         start_time = time.time()
-        logger.info(f"[{upload_id}] Starting WhisperX transcription")
+        logger.info(f"[{upload_id}] Starting WhisperX transcription on GPU")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
                 progress=10,
-                message="Loading WhisperX model..."
+                message="Loading WhisperX model on GPU..."
             )
         
-        # 1. Load model and transcribe - use fixed constants
-        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL})...")
+        # Load model on GPU only
+        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL}) on GPU...")
         
-        # Double-check CUDA status before loading model
-        if not torch.cuda.is_available():
-            logger.error(f"[{upload_id}] CUDA is not available! Cannot use GPU.")
-        else:
-            logger.info(f"[{upload_id}] CUDA is available: {torch.cuda.get_device_name(0)}")
-        
-        try:
-            # First try with GPU
-            logger.info(f"[{upload_id}] Attempting to load model with GPU (CUDA)")
-            model = whisperx.load_model(
-                DEFAULT_MODEL, 
-                DEFAULT_DEVICE, 
-                compute_type=DEFAULT_COMPUTE_TYPE,
-                local_files_only=False
-            )
-            logger.info(f"[{upload_id}] Successfully loaded WhisperX model with GPU")
-        except Exception as e:
-            # Log detailed error
-            logger.error(f"[{upload_id}] GPU load failed with error: {str(e)}")
-            logger.error(f"[{upload_id}] Error type: {type(e).__name__}")
-            
-            # Show traceback for better debugging
-            import traceback
-            tb = traceback.format_exc()
-            logger.error(f"[{upload_id}] Error traceback: {tb}")
-            
-            logger.info(f"[{upload_id}] Falling back to CPU")
-            model = whisperx.load_model(
-                DEFAULT_MODEL,
-                "cpu",
-                compute_type="int8",
-                local_files_only=False
-            )
-            logger.info(f"[{upload_id}] Successfully loaded WhisperX model with CPU")
+        model = whisperx.load_model(
+            DEFAULT_MODEL, 
+            DEFAULT_DEVICE, 
+            compute_type=DEFAULT_COMPUTE_TYPE,
+            local_files_only=False
+        )
+        logger.info(f"[{upload_id}] Successfully loaded WhisperX model on GPU")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
                 progress=30,
-                message="Transcribing audio..."
+                message="Transcribing audio on GPU..."
             )
         
         # Load and transcribe audio
         audio = whisperx.load_audio(audio_path)
-        batch_size = 16  # Use a fixed batch size
+        batch_size = 16
         result = model.transcribe(audio, batch_size=batch_size)
         
-        # Log detected language
         language_code = result["language"]
         logger.info(f"[{upload_id}] Detected language: {language_code}")
         
@@ -291,82 +210,60 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
                 upload_id=upload_id,
                 status="processing",
                 progress=50,
-                message="Aligning transcription with audio..."
+                message="Aligning transcription on GPU..."
             )
         
-        # 2. Align whisper output - try with GPU first, then fall back to CPU if needed
-        logger.info(f"[{upload_id}] Loading alignment model...")
-        try:
-            model_a, metadata = whisperx.load_align_model(language_code=language_code, device=DEFAULT_DEVICE)
-            align_device = DEFAULT_DEVICE
-        except Exception as e:
-            logger.warning(f"[{upload_id}] GPU alignment failed: {str(e)}")
-            model_a, metadata = whisperx.load_align_model(language_code=language_code, device="cpu")
-            align_device = "cpu"
+        # Load alignment model on GPU
+        logger.info(f"[{upload_id}] Loading alignment model on GPU...")
+        model_a, metadata = whisperx.load_align_model(language_code=language_code, device=DEFAULT_DEVICE)
                 
         result = whisperx.align(
             result["segments"],
             model_a,
             metadata,
             audio,
-            align_device,
+            DEFAULT_DEVICE,
             return_char_alignments=False
         )
-        logger.info(f"[{upload_id}] Alignment complete")
+        logger.info(f"[{upload_id}] Alignment complete on GPU")
         
         # Free up memory
         del model_a
         gc.collect()
         torch.cuda.empty_cache()
         
-        # 3. Speaker diarization (if requested and token available)
+        # Speaker diarization on GPU
         if diarize and HF_TOKEN:
             if upload_id:
                 update_processing_status(
                     upload_id=upload_id,
                     status="processing",
                     progress=70,
-                    message="Identifying speakers..."
+                    message="Identifying speakers on GPU..."
                 )
             
-            try:
-                logger.info(f"[{upload_id}] Running speaker diarization...")
-                try:
-                    # Try GPU first
-                    diarize_model = whisperx.DiarizationPipeline(
-                        use_auth_token=HF_TOKEN,
-                        device=DEFAULT_DEVICE
-                    )
-                except Exception as e:
-                    logger.warning(f"[{upload_id}] GPU diarization failed: {str(e)}")
-                    diarize_model = whisperx.DiarizationPipeline(
-                        use_auth_token=HF_TOKEN,
-                        device="cpu"
-                    )
-                
-                # Run diarization
-                diarize_segments = diarize_model(audio)
-                
-                # Assign speakers to words/segments
-                result = whisperx.assign_word_speakers(diarize_segments, result)
-                logger.info(f"[{upload_id}] Speaker diarization complete")
-                
-                # Count unique speakers
-                speaker_set = set()
-                for segment in result["segments"]:
-                    if "speaker" in segment:
-                        speaker_set.add(segment["speaker"])
-                
-                logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers")
-                
-                # Free up memory
-                del diarize_model
-                gc.collect()
-                torch.cuda.empty_cache()
+            logger.info(f"[{upload_id}] Running speaker diarization on GPU...")
+            diarize_model = whisperx.DiarizationPipeline(
+                use_auth_token=HF_TOKEN,
+                device=DEFAULT_DEVICE
+            )
             
-            except Exception as e:
-                logger.error(f"[{upload_id}] Speaker diarization failed: {str(e)}")
-                logger.info(f"[{upload_id}] Continuing with transcription without speaker identification")
+            diarize_segments = diarize_model(audio)
+            result = whisperx.assign_word_speakers(diarize_segments, result)
+            logger.info(f"[{upload_id}] Speaker diarization complete on GPU")
+            
+            # Count unique speakers
+            speaker_set = set()
+            for segment in result["segments"]:
+                if "speaker" in segment:
+                    speaker_set.add(segment["speaker"])
+            
+            logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers")
+            
+            # Free up memory
+            del diarize_model
+            gc.collect()
+            torch.cuda.empty_cache()
         
         else:
             if not diarize:
@@ -378,26 +275,26 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
         end_time = time.time()
         duration = end_time - start_time
         segment_count = len(result["segments"]) if "segments" in result else 0
-        logger.info(f"[{upload_id}] Transcription completed, {segment_count} segments generated")
-        logger.info(f"[{upload_id}] Processing took {duration:.2f} seconds")
+        logger.info(f"[{upload_id}] GPU transcription completed, {segment_count} segments generated")
+        logger.info(f"[{upload_id}] Processing took {duration:.2f} seconds on GPU")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="completed",
                 progress=100,
-                message="Transcription complete"
+                message="GPU transcription complete"
             )
         
         return result
     
     except Exception as e:
-        logger.error(f"[{upload_id}] Transcription failed: {str(e)}")
+        logger.error(f"[{upload_id}] GPU transcription failed: {str(e)}")
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="failed",
                 progress=0,
-                message=f"Processing failed: {str(e)}"
+                message=f"GPU processing failed: {str(e)}"
             )
         raise
