@@ -29,5 +29,5 @@ transformers>=4.48.0
 accelerate==0.25.0
 
 # Speaker diarization with compatible versions
-pyannote.audio==3.1.1  # Use compatible version to avoid model mismatch warnings
+pyannote.audio>=3.3.2  # Updated to match WhisperX requirements
 speechbrain>=0.5.12  # Ensure speechbrain compatibility
