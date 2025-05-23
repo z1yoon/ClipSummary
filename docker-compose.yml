@@ -32,20 +32,8 @@ services:
       - ./models:/app/.cache/huggingface
     environment:
       - PYTHONUNBUFFERED=1
-      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql://clipsummary:clipsummary@postgres:5432/clipsummary
-      - SECRET_KEY=${SECRET_KEY:-mysecretkey}
-      - JWT_SECRET=${JWT_SECRET:-jwtsecretkey}
-      - JWT_ALGORITHM=HS256
-      - ACCESS_TOKEN_EXPIRE_MINUTES=30
-      - MAX_UPLOAD_SIZE=10737418240
-      - WHISPERX_DEVICE=${WHISPERX_DEVICE:-cuda}
       - TRANSFORMERS_CACHE=/app/.cache/huggingface
       - HF_HOME=/app/.cache/huggingface
-      - TRANSFORMERS_OFFLINE=0  # Allow downloading if needed
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512  # Prevent CUDA OOM errors
-      - CUDA_VISIBLE_DEVICES=0  # Use first GPU
     env_file:
       - .env
     depends_on:
@@ -69,9 +57,9 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_PASSWORD=clipsummary
-      - POSTGRES_USER=clipsummary
-      - POSTGRES_DB=clipsummary
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-clipsummary}
+      - POSTGRES_USER=${POSTGRES_USER:-clipsummary}
+      - POSTGRES_DB=${POSTGRES_DB:-clipsummary}
     ports:
       - "5432:5432"
     restart: always
