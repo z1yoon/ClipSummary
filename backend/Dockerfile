@@ -28,7 +28,7 @@ FROM dependencies as runtime
 WORKDIR /app
 
 # Copy installed dependencies from the dependencies stage
-COPY --from=dependencies /usr/local/lib/python3.8/site-packages /usr/local/lib/python3.8/site-packages
+COPY --from=dependencies /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 COPY --from=dependencies /usr/local/bin /usr/local/bin
 
 # Copy only the necessary application files
