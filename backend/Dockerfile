@@ -1,5 +1,5 @@
-# Use the official PyTorch image with CUDA support
-FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn8-runtime
+# Use an available PyTorch image with CUDA support
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
@@ -18,8 +18,15 @@ COPY requirements.txt .
 # Using --no-cache-dir reduces the image size
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application
-COPY . .
+# Copy only the necessary application files
+COPY ./ai ./ai
+COPY ./api ./api
+COPY ./db ./db
+COPY ./schemas ./schemas
+COPY ./security ./security
+COPY ./utils ./utils
+COPY ./main.py ./
+COPY ./logging.conf ./
 
 # Create necessary directories
 RUN mkdir -p uploads cache .cache/huggingface

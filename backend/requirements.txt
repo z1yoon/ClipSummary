@@ -22,14 +22,14 @@ ffmpeg-python==0.2.0
 yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
 
 # AI and ML dependencies
-numpy>=2.0.2  # Updated to match WhisperX 3.3.3 requirements
-whisperx==3.3.3  # Updated from 3.1.1 to match official API
-# torch and related packages are already installed in the base image
-# torch>=2.5.1
-transformers==4.48.0
+numpy>=1.24.0  # Compatible with WhisperX and PyTorch 2.1.0
+whisperx==3.3.3
+# PyTorch and related packages are already installed in the base image
+# Do not reinstall torch as it's included in the Docker image
+transformers==4.36.0  # Version compatible with PyTorch 2.1.0
 accelerate==0.25.0
-hf_xet  # Added for improved Hugging Face Hub download performance
+hf_xet  # For improved Hugging Face Hub download performance
 
 # Only needed if using speaker diarization
-pyannote.audio==3.3.2
-bitsandbytes>=0.41.4  # Updated to latest version for compatibility
+pyannote.audio==3.1.1  # Using version compatible with PyTorch 2.1.0
+bitsandbytes>=0.41.1  # Version compatible with PyTorch 2.1.0
