@@ -3,6 +3,7 @@ fastapi==0.104.0
 uvicorn==0.23.2
 python-multipart==0.0.6
 pydantic==2.4.2
+email-validator==2.1.0  # Required for Pydantic email validation
 httpx==0.25.0
 python-dotenv==1.0.0
 
@@ -26,7 +27,7 @@ numpy>=1.24.0  # Compatible with WhisperX and PyTorch 2.1.0
 whisperx==3.3.3
 # PyTorch and related packages are already installed in the base image
 # Do not reinstall torch as it's included in the Docker image
-transformers>=4.48
+transformers>=4.48.0  # Version compatible with PyTorch 2.1.0
 accelerate==0.25.0
 hf_xet  # For improved Hugging Face Hub download performance
 
