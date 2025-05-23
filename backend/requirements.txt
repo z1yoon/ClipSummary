@@ -32,6 +32,9 @@ torchaudio
 
 # AI and ML dependencies (PyTorch installed separately in Dockerfile)
 numpy>=2.0.2  # Updated to match WhisperX requirements
+matplotlib>=3.5.0  # Added for pyannote.audio compatibility
+scipy>=1.9.0  # Added for pyannote.audio compatibility
+scikit-learn>=1.1.0  # Added for pyannote.audio compatibility
 whisperx==3.3.3
 transformers>=4.48.0
 accelerate==0.25.0
