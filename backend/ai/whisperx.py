@@ -14,11 +14,37 @@ logger = logging.getLogger(__name__)
 
 # Set fixed values to avoid any reference errors
 DEFAULT_MODEL = "large-v2"
-DEFAULT_DEVICE = "cuda" 
 DEFAULT_COMPUTE_TYPE = "float16"
 
 # Force CUDA visible devices to ensure GPU is used
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+# Improved CUDA detection and device selection
+def detect_best_device():
+    """Detect the best available device for computation"""
+    if not torch.cuda.is_available():
+        logger.warning("CUDA is not available - using CPU")
+        return "cpu", "int8"
+    
+    try:
+        # Test if CUDA actually works with a simple operation
+        test_tensor = torch.tensor([1.0, 2.0, 3.0])
+        test_result = test_tensor.cuda()
+        _ = test_result * 2  # Simple operation to verify CUDA works
+        del test_tensor, test_result
+        torch.cuda.empty_cache()
+        
+        device_name = torch.cuda.get_device_name(0)
+        logger.info(f"CUDA test successful - using GPU: {device_name}")
+        return "cuda", "float16"
+        
+    except Exception as e:
+        logger.warning(f"CUDA test failed: {str(e)}")
+        logger.info("CUDA is available but not working properly - falling back to CPU")
+        return "cpu", "int8"
+
+# Detect the best device at startup
+DEFAULT_DEVICE, DEFAULT_COMPUTE_TYPE = detect_best_device()
 
 # Log configuration
 logger.info(f"WhisperX configured with: model={DEFAULT_MODEL}, device={DEFAULT_DEVICE}")
@@ -36,15 +62,16 @@ if torch.cuda.is_available():
         logger.info(f"Current CUDA device: {current_device} - {device_name}")
         logger.info(f"CUDA version: {cuda_version}, PyTorch: {torch_version}")
         
-        # Verify CUDA is working by running a small tensor operation
-        test_tensor = torch.tensor([1.0, 2.0, 3.0]).cuda()
-        result = test_tensor * 2
-        logger.info(f"CUDA test successful: {result.cpu().numpy()}")
+        # Check if this is an RTX 5090 with potential compatibility issues
+        if "RTX 5090" in device_name:
+            logger.warning("RTX 5090 detected - checking CUDA compatibility...")
+            logger.info("If you encounter CUDA errors, the PyTorch version may need updating")
+        
     except Exception as e:
         logger.error(f"Error during CUDA verification: {str(e)}")
+        logger.info("Will fall back to CPU processing")
 else:
-    logger.error("CUDA NOT AVAILABLE - GPU OPERATIONS WILL FAIL!")
-    logger.error("Check that your Docker container has access to the GPU")
+    logger.warning("CUDA NOT AVAILABLE - using CPU processing")
 
 # Get HuggingFace token from environment variables for speaker diarization
 HF_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)

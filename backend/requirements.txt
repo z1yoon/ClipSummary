@@ -22,19 +22,19 @@ alembic==1.13.1
 ffmpeg-python==0.2.0
 yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
 
-# PyTorch with CUDA 12.4 for RTX 5090 GPU support (sm_120)
---extra-index-url https://download.pytorch.org/whl/nightly/cu124
-torch
-torchvision
-torchaudio
+# PyTorch with CUDA 12.6 support for RTX 5090 (sm_120)
+# Using the latest stable release that supports RTX 5090
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch>=2.5.0
+torchvision>=0.20.0
+torchaudio>=2.5.0
 
 # AI and ML dependencies
-numpy>=1.24.0  # Compatible with PyTorch nightly
+numpy>=1.24.0,<2.0.0  # Pin numpy version for compatibility
 whisperx==3.3.3
 transformers>=4.48.0
 accelerate==0.25.0
-hf_xet  # For improved Hugging Face Hub download performance
 
-# Only needed if using speaker diarization
-pyannote.audio>=3.3.2
-bitsandbytes>=0.41.1
+# Speaker diarization with compatible versions
+pyannote.audio==3.1.1  # Use compatible version to avoid model mismatch warnings
+speechbrain>=0.5.12  # Ensure speechbrain compatibility

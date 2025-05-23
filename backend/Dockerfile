@@ -1,5 +1,5 @@
-# Stage 1: Base with CUDA 12.4 support for RTX 5090
-FROM nvidia/cuda:12.4.0-base-ubuntu22.04 as base
+# Stage 1: Base with CUDA 12.6 support for RTX 5090
+FROM nvidia/cuda:12.6-base-ubuntu22.04 as base
 
 # Install Python and essential tools
 RUN apt-get update && apt-get install -y \
@@ -39,8 +39,9 @@ COPY requirements.txt .
 
 # Install all Python dependencies from requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-# Verify CUDA setup
-RUN python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('CUDA version:', torch.version.cuda); print('Device count:', torch.cuda.device_count()); print('PyTorch version:', torch.__version__); print('Compute capability:', torch.cuda.get_device_capability(0) if torch.cuda.is_available() else 'N/A')"
+
+# Verify CUDA setup and RTX 5090 compatibility
+RUN python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('CUDA version:', torch.version.cuda); print('Device count:', torch.cuda.device_count()); print('PyTorch version:', torch.__version__); print('Compute capability:', torch.cuda.get_device_capability(0) if torch.cuda.is_available() else 'N/A'); print('Device name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
 
 # Stage 3: Runtime
 FROM dependencies as runtime
@@ -61,14 +62,16 @@ COPY ./logging.conf ./
 RUN mkdir -p uploads cache .cache/huggingface/hub && \
     chmod -R 777 uploads cache .cache
 
-# Set environment variables
+# Set environment variables for better CUDA compatibility
 ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_OFFLINE=0
 ENV CUDA_LAUNCH_BLOCKING=1
-# Force device index
 ENV CUDA_VISIBLE_DEVICES=0
+# Environment variables to help with RTX 5090 compatibility
+ENV TORCH_CUDA_ARCH_LIST="5.0;6.0;7.0;7.5;8.0;8.6;9.0;12.0"
+ENV CUDA_MODULE_LOADING=LAZY
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]
