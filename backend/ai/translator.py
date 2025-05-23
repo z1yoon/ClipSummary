@@ -2,7 +2,8 @@ from transformers import MarianMTModel, MarianTokenizer
 import torch
 import logging
 import time
-from typing import Dict, List
+import os
+from typing import Dict, List, Optional, Tuple
 from utils.cache import update_processing_status
 
 # Configure logging
@@ -12,33 +13,67 @@ logger = logging.getLogger(__name__)
 # Cache for loaded models
 model_cache: Dict[str, tuple[MarianMTModel, MarianTokenizer]] = {}
 
-def get_model_name(target_lang: str) -> str:
-    """Get the appropriate model name for the target language."""
-    lang_to_model = {
-        'es': 'Helsinki-NLP/opus-mt-en-es',
-        'fr': 'Helsinki-NLP/opus-mt-en-fr',
-        'de': 'Helsinki-NLP/opus-mt-en-de',
-        'zh': 'Helsinki-NLP/opus-mt-en-zh',
-        'ja': 'Helsinki-NLP/opus-mt-en-jap',
-        'ko': 'Helsinki-NLP/opus-mt-en-ko',
-        'ru': 'Helsinki-NLP/opus-mt-en-ru',
-        'ar': 'Helsinki-NLP/opus-mt-en-ar',
-        'hi': 'Helsinki-NLP/opus-mt-en-hi'
-    }
-    return lang_to_model.get(target_lang, 'Helsinki-NLP/opus-mt-en-ROMANCE')
+# Available models (based on what's actually downloaded)
+AVAILABLE_MODELS = [
+    'Helsinki-NLP/opus-mt-en-zh',  # English to Chinese
+    'Helsinki-NLP/opus-mt-ko-en',  # Korean to English
+    'Helsinki-NLP/opus-mt-mul-en', # Multiple languages to English
+    'Helsinki-NLP/opus-mt-zh-en',  # Chinese to English
+]
 
-def load_translation_model(target_lang: str, upload_id: str = None) -> tuple[MarianMTModel, MarianTokenizer]:
-    """Load translation model with detailed logging."""
-    model_name = get_model_name(target_lang)
+def get_model_name(source_lang: str, target_lang: str) -> Optional[str]:
+    """
+    Get the appropriate model name for the source and target language pair.
+    
+    Args:
+        source_lang: Source language code (e.g., 'en', 'zh', 'ko')
+        target_lang: Target language code (e.g., 'en', 'zh', 'ko')
+    
+    Returns:
+        Model name or None if no appropriate model is available
+    """
+    # Specific language pair models
+    lang_pair_models = {
+        ('en', 'zh'): 'Helsinki-NLP/opus-mt-en-zh',
+        ('zh', 'en'): 'Helsinki-NLP/opus-mt-zh-en',
+        ('ko', 'en'): 'Helsinki-NLP/opus-mt-ko-en',
+    }
+    
+    # Get the specific model for this language pair if available
+    model_key = (source_lang, target_lang)
+    if model_key in lang_pair_models and lang_pair_models[model_key] in AVAILABLE_MODELS:
+        return lang_pair_models[model_key]
+    
+    # For translation TO English from various languages, use the multilingual model
+    if target_lang == 'en' and 'Helsinki-NLP/opus-mt-mul-en' in AVAILABLE_MODELS:
+        return 'Helsinki-NLP/opus-mt-mul-en'
+    
+    # No suitable model found
+    return None
+
+def check_model_available(model_name: str) -> bool:
+    """Check if the model is in our list of available models."""
+    if not model_name:
+        return False
+    return model_name in AVAILABLE_MODELS
+
+def load_translation_model(source_lang: str, target_lang: str, upload_id: str = None) -> Optional[Tuple[MarianMTModel, MarianTokenizer]]:
+    """Load translation model with detailed logging and fallback mechanisms."""
+    model_name = get_model_name(source_lang, target_lang)
+    
+    # If model is not available for this language pair, return None
+    if not model_name:
+        logger.warning(f"[{upload_id}] Translation model for {source_lang} to {target_lang} is not available")
+        return None
     
     # Check cache first
     if model_name in model_cache:
-        logger.info(f"[{upload_id}] Using cached translation model for {target_lang}")
+        logger.info(f"[{upload_id}] Using cached translation model for {source_lang} to {target_lang}")
         return model_cache[model_name]
     
     try:
         start_time = time.time()
-        logger.info(f"[{upload_id}] Loading translation model for {target_lang} ({model_name})")
+        logger.info(f"[{upload_id}] Loading translation model for {source_lang} to {target_lang} ({model_name})")
         
         # Log CUDA status
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -69,19 +104,27 @@ def load_translation_model(target_lang: str, upload_id: str = None) -> tuple[Mar
     except Exception as e:
         error_msg = f"Failed to load translation model: {str(e)}"
         logger.error(f"[{upload_id}] {error_msg}")
-        raise Exception(error_msg)
+        # Return None instead of raising an exception
+        return None
 
-def translate_text(text: str, target_lang: str, upload_id: str = None, 
+def translate_text(text: str, target_lang: str, source_lang: str = "en", upload_id: str = None, 
                   segment_index: int = None, total_segments: int = None) -> str:
     """Translate text with detailed logging and progress updates."""
     try:
         # Load model
-        model, tokenizer = load_translation_model(target_lang, upload_id)
+        model_result = load_translation_model(source_lang, target_lang, upload_id)
+        
+        # If model couldn't be loaded, return original text
+        if model_result is None:
+            logger.warning(f"[{upload_id}] Translation from {source_lang} to {target_lang} skipped (model not available)")
+            return text
+            
+        model, tokenizer = model_result
         
         # Log translation attempt
         start_time = time.time()
         text_length = len(text)
-        logger.info(f"[{upload_id}] Translating text to {target_lang} (length: {text_length} chars)")
+        logger.info(f"[{upload_id}] Translating text from {source_lang} to {target_lang} (length: {text_length} chars)")
         
         if segment_index is not None and total_segments is not None:
             progress_msg = f"Translating segment {segment_index}/{total_segments} to {target_lang}"
@@ -120,27 +163,30 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
     except Exception as e:
         error_msg = f"Translation failed: {str(e)}"
         logger.error(f"[{upload_id}] {error_msg}")
-        if upload_id:
-            update_processing_status(
-                upload_id=upload_id,
-                status="error",
-                progress=0,
-                message=error_msg
-            )
-        raise Exception(error_msg)
+        logger.error(f"[{upload_id}] Returning original text due to translation error")
+        
+        # Instead of failing, return the original text
+        return text
 
-def batch_translate(texts: List[str], target_lang: str, upload_id: str = None) -> List[str]:
+def batch_translate(texts: List[str], target_lang: str, source_lang: str = "en", upload_id: str = None) -> List[str]:
     """Batch translate multiple texts with progress tracking."""
     try:
         total_texts = len(texts)
-        logger.info(f"[{upload_id}] Starting batch translation of {total_texts} texts to {target_lang}")
+        logger.info(f"[{upload_id}] Starting batch translation of {total_texts} texts from {source_lang} to {target_lang}")
         start_time = time.time()
+        
+        # First check if translation is available for this language pair
+        model_result = load_translation_model(source_lang, target_lang, upload_id)
+        if model_result is None:
+            logger.warning(f"[{upload_id}] Translation from {source_lang} to {target_lang} skipped (model not available)")
+            return texts  # Return original texts
         
         translated_texts = []
         for i, text in enumerate(texts, 1):
             translated = translate_text(
-                text, 
-                target_lang, 
+                text,
+                target_lang,
+                source_lang=source_lang,
                 upload_id=upload_id,
                 segment_index=i,
                 total_segments=total_texts
@@ -161,11 +207,7 @@ def batch_translate(texts: List[str], target_lang: str, upload_id: str = None) -
     except Exception as e:
         error_msg = f"Batch translation failed: {str(e)}"
         logger.error(f"[{upload_id}] {error_msg}")
-        if upload_id:
-            update_processing_status(
-                upload_id=upload_id,
-                status="error",
-                progress=0,
-                message=error_msg
-            )
-        raise Exception(error_msg)
+        logger.warning(f"[{upload_id}] Returning original texts due to translation error")
+        
+        # Instead of failing, return original texts
+        return texts

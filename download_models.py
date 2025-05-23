@@ -4,7 +4,6 @@ import sys
 import logging
 import subprocess
 from pathlib import Path
-import time
 
 # Configure logging
 logging.basicConfig(
@@ -80,48 +79,27 @@ def install_dependencies():
                 except subprocess.CalledProcessError as e:
                     logger.error(f"❌ Failed to install sentencepiece from source: {str(e)}")
 
-def download_model_files(model_id, output_dir):
-    """Download model files using huggingface-cli"""
+def download_model(model_id, output_dir):
+    """Download a model using huggingface_hub snapshot_download"""
     try:
+        # Import here after dependencies are installed
+        from huggingface_hub import snapshot_download
+        
         logger.info(f"Downloading model: {model_id}")
         
-        # Create huggingface-cli command
-        cmd = [
-            sys.executable, "-m", "huggingface_hub", "download",
-            "--repo-id", model_id,
-            "--local-dir", str(output_dir / model_id.replace("/", "--")),
-            "--local-dir-use-symlinks", "False"
-        ]
+        # Create a directory for this model
+        model_dir = output_dir / model_id.replace("/", "--")
+        model_dir.mkdir(exist_ok=True, parents=True)
         
-        # Run the command
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+        # Download the model
+        snapshot_download(
+            repo_id=model_id,
+            local_dir=str(model_dir),
+            local_dir_use_symlinks=False
         )
         
-        # Process output in real-time
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                logger.info(output.strip())
-        
-        # Check for errors
-        stderr = process.stderr.read()
-        if stderr:
-            logger.warning(stderr)
-        
-        # Check return code
-        if process.returncode == 0:
-            logger.info(f"✅ Successfully downloaded {model_id}")
-            return True
-        else:
-            logger.error(f"❌ Failed to download {model_id}, return code: {process.returncode}")
-            return False
-            
+        logger.info(f"✅ Successfully downloaded {model_id}")
+        return True
     except Exception as e:
         logger.error(f"❌ Error downloading {model_id}: {str(e)}")
         return False
@@ -151,7 +129,7 @@ def main():
     for model_type, model_list in MODELS.items():
         logger.info(f"\n=== Downloading {model_type} models ===")
         for model_id in model_list:
-            success = download_model_files(model_id, models_dir)
+            success = download_model(model_id, models_dir)
             if success:
                 successful_downloads += 1
     
