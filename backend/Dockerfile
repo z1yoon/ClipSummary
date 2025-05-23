@@ -45,8 +45,11 @@ ENV CUDA_LAUNCH_BLOCKING=0
 # Copy requirements file
 COPY requirements.txt .
 
-# Install PyTorch nightly first for RTX 5090 support
-RUN pip install --no-cache-dir --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124
+# Install PyTorch stable version with CUDA 12.4 support for RTX 5090
+RUN pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
+
+# Install torchaudio separately (CPU version is fine for audio processing)
+RUN pip install --no-cache-dir torchaudio==2.5.1
 
 # Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
