@@ -1,17 +1,21 @@
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+# Use the official PyTorch image with CUDA support
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
-# Install system dependencies including FFmpeg
+# Install only necessary system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
-    build-essential \
+    --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Copy only requirements file first to leverage Docker cache
 COPY requirements.txt .
+
+# Install Python dependencies, excluding PyTorch which is already installed
+# Using --no-cache-dir reduces the image size
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application
@@ -24,8 +28,6 @@ RUN mkdir -p uploads cache .cache/huggingface
 ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
-
-# Disable TRANSFORMERS_OFFLINE to allow downloads if needed
 ENV TRANSFORMERS_OFFLINE=0
 
 # Set permissions for directories that need write access

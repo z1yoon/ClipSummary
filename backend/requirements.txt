@@ -24,7 +24,8 @@ yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
 # AI and ML dependencies
 numpy>=2.0.2  # Updated to match WhisperX 3.3.3 requirements
 whisperx==3.3.3  # Updated from 3.1.1 to match official API
-torch>=2.5.1  # Updated to match WhisperX 3.3.3 requirements
+# torch and related packages are already installed in the base image
+# torch>=2.5.1
 transformers==4.48.0
 accelerate==0.25.0
 hf_xet  # Added for improved Hugging Face Hub download performance
