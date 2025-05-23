@@ -14,6 +14,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_KEY }}
+          tags: tag:github-runner
+      
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
@@ -22,24 +28,22 @@ jobs:
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          echo -e "Host ${{ secrets.DEPLOY_HOST }}\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+          echo -e "Host ${{ secrets.TAILSCALE_SERVER_IP }}\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
           chmod 600 ~/.ssh/config
-      
-      - name: Get branch name
-        id: branch-name
-        run: |
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            echo "branch=main" >> $GITHUB_OUTPUT
-          else
-            echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
-          fi
       
       - name: Deploy to server
         env:
-          BRANCH_NAME: ${{ steps.branch-name.outputs.branch }}
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          # SSH into server, clone/pull repository, build and run with docker-compose
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "bash -s" << 'ENDSSH'
+          # Wait for Tailscale connection to be established
+          echo "Waiting for Tailscale connection to be established..."
+          sleep 10
+          
+          # Check Tailscale status
+          tailscale status
+          
+          # SSH into server using Tailscale IP
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.TAILSCALE_SERVER_IP }} "bash -s" << 'ENDSSH'
             # Go to the deploy directory
             cd ${{ secrets.DEPLOY_DIR }}
             
@@ -69,12 +73,12 @@ jobs:
             # Build and run with docker-compose
             echo "Building and starting containers with docker-compose..."
             docker-compose build
-            docker-compose up -d
+            #docker-compose up -d
             
             # Wait for services to be up
             sleep 10
             
             # Show running containers
             docker-compose ps
-            docker-compose logs --tail=30
+            #docker-compose logs --tail=30
           ENDSSH

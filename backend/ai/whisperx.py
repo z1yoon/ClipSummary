@@ -208,6 +208,9 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
     Returns:
         Dict containing transcription results with timestamps and speaker labels
     """
+    # Initialize device variable in function scope to ensure it's always defined
+    global device, compute_type
+    
     try:
         start_time = time.time()
         logger.info(f"[{upload_id}] Starting WhisperX transcription")
