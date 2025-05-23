@@ -31,5 +31,5 @@ accelerate==0.25.0
 hf_xet  # For improved Hugging Face Hub download performance
 
 # Only needed if using speaker diarization
-pyannote.audio==3.1.1  # Using version compatible with PyTorch 2.1.0
+pyannote.audio>=3.3.2  # Using version compatible with PyTorch 2.1.0
 bitsandbytes>=0.41.1  # Version compatible with PyTorch 2.1.0

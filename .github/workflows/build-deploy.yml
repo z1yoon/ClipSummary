@@ -14,6 +14,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
+      - name: Debug secrets access
+        run: |
+          echo "Checking if secrets are accessible:"
+          if [[ -n "${{ secrets.DEPLOY_HOST }}" ]]; then
+            echo "DEPLOY_HOST secret is set"
+          else
+            echo "DEPLOY_HOST secret is NOT set"
+          fi
+          if [[ -n "${{ secrets.DEPLOY_USER }}" ]]; then
+            echo "DEPLOY_USER secret is set"
+          else
+            echo "DEPLOY_USER secret is NOT set"
+          fi
+          if [[ -n "${{ secrets.DEPLOY_SSH_KEY }}" ]]; then
+            echo "DEPLOY_SSH_KEY secret is set (value masked)"
+          else
+            echo "DEPLOY_SSH_KEY secret is NOT set"
+          fi
+      
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
@@ -22,7 +41,14 @@ jobs:
       - name: Add host key
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          # Try with ssh-keyscan first
+          echo "Attempting to add host key with ssh-keyscan..."
+          if ! ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts; then
+            echo "ssh-keyscan failed, trying alternative approach..."
+            # Alternative approach - disable StrictHostKeyChecking for this host
+            echo -e "Host ${{ secrets.DEPLOY_HOST }}\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+            chmod 600 ~/.ssh/config
+          fi
       
       - name: Get branch name
         id: branch-name
