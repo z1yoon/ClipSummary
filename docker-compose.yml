@@ -34,11 +34,14 @@ services:
       - PYTHONUNBUFFERED=1
       - TRANSFORMERS_CACHE=/app/.cache/huggingface
       - HF_HOME=/app/.cache/huggingface
+      - CUDA_VISIBLE_DEVICES=0
+      - TORCH_USE_CUDA_DSA=1
     env_file:
       - .env
     depends_on:
       - redis
       - postgres
+    restart: always
     deploy:
       resources:
         reservations:
@@ -46,6 +49,12 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu, compute, utility]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   redis:
     image: redis:alpine

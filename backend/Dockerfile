@@ -1,12 +1,13 @@
 # Use official PyTorch image with CUDA 12.8 support for RTX 5090/5080
 FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
 
-# Install system dependencies
+# Install system dependencies including curl for healthcheck
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
     wget \
     build-essential \
+    curl \
     --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -19,6 +20,8 @@ ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_OFFLINE=0
+# Fix cuDNN library path issues
+ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
 
 # Copy requirements file
 COPY requirements.txt .

@@ -20,6 +20,26 @@ DEFAULT_COMPUTE_TYPE = "float16"
 # Force CUDA visible devices to ensure GPU is used
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+# Fix cuDNN library issues for RTX 5090
+def fix_cudnn_issues():
+    """Fix cuDNN library path and TF32 issues for RTX 5090"""
+    try:
+        # Enable TF32 for better performance on RTX 5090
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        logger.info("Enabled TF32 for RTX 5090 performance optimization")
+        
+        # Set cuDNN deterministic mode for stability
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+        logger.info("Configured cuDNN for RTX 5090 stability")
+        
+    except Exception as e:
+        logger.warning(f"Could not configure cuDNN settings: {e}")
+
+# Apply cuDNN fixes
+fix_cudnn_issues()
+
 # Verify RTX 5090 CUDA compatibility
 def verify_rtx5090_cuda():
     """Verify CUDA works properly with RTX 5090"""
@@ -34,7 +54,7 @@ def verify_rtx5090_cuda():
     logger.info(f"CUDA version: {cuda_version}")
     logger.info(f"PyTorch version: {torch_version}")
     
-    # Test CUDA functionality
+    # Test CUDA functionality with better error handling
     try:
         test_tensor = torch.tensor([1.0, 2.0, 3.0]).cuda()
         result = test_tensor * 2
@@ -47,18 +67,25 @@ def verify_rtx5090_cuda():
         raise RuntimeError(f"RTX 5090 CUDA test failed: {str(e)}")
 
 # Verify RTX 5090 CUDA at startup
-verify_rtx5090_cuda()
+try:
+    verify_rtx5090_cuda()
+except Exception as e:
+    logger.error(f"RTX 5090 CUDA verification failed: {e}")
+    # Continue anyway, might work in CPU mode
+    DEFAULT_DEVICE = "cpu"
+    DEFAULT_COMPUTE_TYPE = "int8"
+    logger.warning("Falling back to CPU mode due to CUDA issues")
 
 # Log configuration
 logger.info(f"WhisperX configured with: model={DEFAULT_MODEL}, device={DEFAULT_DEVICE}")
 
 # Detailed CUDA information
-device_name = torch.cuda.get_device_name(0)
-cuda_version = torch.version.cuda
+device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+cuda_version = torch.version.cuda if torch.cuda.is_available() else "N/A"
 torch_version = torch.__version__
-device_count = torch.cuda.device_count()
-current_device = torch.cuda.current_device()
-capability = torch.cuda.get_device_capability(0)
+device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+current_device = torch.cuda.current_device() if torch.cuda.is_available() else "CPU"
+capability = torch.cuda.get_device_capability(0) if torch.cuda.is_available() else (0, 0)
 
 logger.info(f"CUDA device count: {device_count}")
 logger.info(f"Current CUDA device: {current_device} - {device_name}")
@@ -118,7 +145,7 @@ def wait_for_model(timeout=300):
     return False  # Timeout
 
 def load_models():
-    """Load WhisperX models into memory on RTX 5090"""
+    """Load WhisperX models into memory on RTX 5090 with error handling"""
     global asr_model, model_loading_state
     
     if asr_model is not None:
@@ -136,139 +163,173 @@ def load_models():
         model_loading_state["progress"] = 10
         model_loading_state["message"] = "Starting WhisperX model load"
         
-        logger.info(f"Loading WhisperX model ({DEFAULT_MODEL}) on RTX 5090...")
+        logger.info(f"Loading WhisperX model ({DEFAULT_MODEL}) on {DEFAULT_DEVICE}...")
         
         model_loading_state["progress"] = 50
-        model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model on RTX 5090..."
+        model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model on {DEFAULT_DEVICE}..."
         
-        # Load model on RTX 5090
-        asr_model = whisperx.load_model(
-            DEFAULT_MODEL, 
-            DEFAULT_DEVICE, 
-            compute_type=DEFAULT_COMPUTE_TYPE,
-            local_files_only=False
-        )
+        # Load model with better error handling
+        try:
+            asr_model = whisperx.load_model(
+                DEFAULT_MODEL, 
+                DEFAULT_DEVICE, 
+                compute_type=DEFAULT_COMPUTE_TYPE,
+                local_files_only=False
+            )
+        except Exception as model_error:
+            logger.error(f"Failed to load model on {DEFAULT_DEVICE}: {model_error}")
+            if DEFAULT_DEVICE == "cuda":
+                logger.info("Falling back to CPU mode...")
+                asr_model = whisperx.load_model(
+                    DEFAULT_MODEL, 
+                    "cpu", 
+                    compute_type="int8",
+                    local_files_only=False
+                )
+            else:
+                raise
         
         model_loading_state["progress"] = 100
-        model_loading_state["message"] = "Model loaded successfully on RTX 5090"
+        model_loading_state["message"] = f"Model loaded successfully on {DEFAULT_DEVICE}"
         
         total_time = time.time() - model_loading_state["start_time"]
-        logger.info(f"WhisperX model loaded successfully on RTX 5090 in {total_time:.2f}s")
+        logger.info(f"WhisperX model loaded successfully in {total_time:.2f}s")
         
     except Exception as e:
-        logger.error(f"Failed to load WhisperX model on RTX 5090: {str(e)}")
+        logger.error(f"Failed to load WhisperX model: {str(e)}")
         model_loading_state["progress"] = 0
-        model_loading_state["message"] = f"RTX 5090 Error: {str(e)}"
-        raise RuntimeError(f"RTX 5090 model loading failed: {str(e)}")
+        model_loading_state["message"] = f"Model loading error: {str(e)}"
+        raise RuntimeError(f"Model loading failed: {str(e)}")
     finally:
         model_loading_state["is_loading"] = False
         model_loading_lock.release()
 
 def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = True) -> Dict[str, Any]:
-    """Transcribe audio using WhisperX on RTX 5090"""
+    """Transcribe audio using WhisperX with improved error handling"""
     try:
         start_time = time.time()
-        logger.info(f"[{upload_id}] Starting WhisperX transcription on RTX 5090")
+        logger.info(f"[{upload_id}] Starting WhisperX transcription on {DEFAULT_DEVICE}")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
                 progress=10,
-                message="Loading WhisperX model on RTX 5090..."
+                message=f"Loading WhisperX model on {DEFAULT_DEVICE}..."
             )
         
-        # Load model on RTX 5090
-        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL}) on RTX 5090...")
+        # Load model with fallback handling
+        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL}) on {DEFAULT_DEVICE}...")
         
-        model = whisperx.load_model(
-            DEFAULT_MODEL, 
-            DEFAULT_DEVICE, 
-            compute_type=DEFAULT_COMPUTE_TYPE,
-            local_files_only=False
-        )
-        logger.info(f"[{upload_id}] Successfully loaded WhisperX model on RTX 5090")
+        try:
+            model = whisperx.load_model(
+                DEFAULT_MODEL, 
+                DEFAULT_DEVICE, 
+                compute_type=DEFAULT_COMPUTE_TYPE,
+                local_files_only=False
+            )
+            current_device = DEFAULT_DEVICE
+        except Exception as e:
+            logger.warning(f"[{upload_id}] Failed to load on {DEFAULT_DEVICE}: {e}")
+            logger.info(f"[{upload_id}] Falling back to CPU mode...")
+            model = whisperx.load_model(
+                DEFAULT_MODEL, 
+                "cpu", 
+                compute_type="int8",
+                local_files_only=False
+            )
+            current_device = "cpu"
+        
+        logger.info(f"[{upload_id}] Successfully loaded WhisperX model on {current_device}")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
                 progress=30,
-                message="Transcribing audio on RTX 5090..."
+                message=f"Transcribing audio on {current_device}..."
             )
         
         # Load and transcribe audio
         audio = whisperx.load_audio(audio_path)
-        batch_size = 16
+        batch_size = 16 if current_device == "cuda" else 4
         result = model.transcribe(audio, batch_size=batch_size)
         
         language_code = result["language"]
         logger.info(f"[{upload_id}] Detected language: {language_code}")
         
-        # Free up GPU memory
+        # Free up memory
         del model
         gc.collect()
-        torch.cuda.empty_cache()
+        if current_device == "cuda":
+            torch.cuda.empty_cache()
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
                 progress=50,
-                message="Aligning transcription on RTX 5090..."
+                message=f"Aligning transcription on {current_device}..."
             )
         
-        # Load alignment model on RTX 5090
-        logger.info(f"[{upload_id}] Loading alignment model on RTX 5090...")
-        model_a, metadata = whisperx.load_align_model(language_code=language_code, device=DEFAULT_DEVICE)
+        # Load alignment model
+        logger.info(f"[{upload_id}] Loading alignment model on {current_device}...")
+        model_a, metadata = whisperx.load_align_model(language_code=language_code, device=current_device)
                 
         result = whisperx.align(
             result["segments"],
             model_a,
             metadata,
             audio,
-            DEFAULT_DEVICE,
+            current_device,
             return_char_alignments=False
         )
-        logger.info(f"[{upload_id}] Alignment complete on RTX 5090")
+        logger.info(f"[{upload_id}] Alignment complete on {current_device}")
         
         # Free up memory
         del model_a
         gc.collect()
-        torch.cuda.empty_cache()
+        if current_device == "cuda":
+            torch.cuda.empty_cache()
         
-        # Speaker diarization on RTX 5090
+        # Speaker diarization
         if diarize and HF_TOKEN:
             if upload_id:
                 update_processing_status(
                     upload_id=upload_id,
                     status="processing",
                     progress=70,
-                    message="Identifying speakers on RTX 5090..."
+                    message=f"Identifying speakers on {current_device}..."
                 )
             
-            logger.info(f"[{upload_id}] Running speaker diarization on RTX 5090...")
-            diarize_model = whisperx.DiarizationPipeline(
-                use_auth_token=HF_TOKEN,
-                device=DEFAULT_DEVICE
-            )
-            
-            diarize_segments = diarize_model(audio)
-            result = whisperx.assign_word_speakers(diarize_segments, result)
-            logger.info(f"[{upload_id}] Speaker diarization complete on RTX 5090")
-            
-            # Count unique speakers
-            speaker_set = set()
-            for segment in result["segments"]:
-                if "speaker" in segment:
-                    speaker_set.add(segment["speaker"])
-            
-            logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers")
-            
-            # Free up memory
-            del diarize_model
-            gc.collect()
-            torch.cuda.empty_cache()
+            logger.info(f"[{upload_id}] Running speaker diarization on {current_device}...")
+            try:
+                diarize_model = whisperx.DiarizationPipeline(
+                    use_auth_token=HF_TOKEN,
+                    device=current_device
+                )
+                
+                diarize_segments = diarize_model(audio)
+                result = whisperx.assign_word_speakers(diarize_segments, result)
+                logger.info(f"[{upload_id}] Speaker diarization complete on {current_device}")
+                
+                # Count unique speakers
+                speaker_set = set()
+                for segment in result["segments"]:
+                    if "speaker" in segment:
+                        speaker_set.add(segment["speaker"])
+                
+                logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers")
+                
+                # Free up memory
+                del diarize_model
+                gc.collect()
+                if current_device == "cuda":
+                    torch.cuda.empty_cache()
+                    
+            except Exception as diarize_error:
+                logger.warning(f"[{upload_id}] Speaker diarization failed: {diarize_error}")
+                logger.info(f"[{upload_id}] Continuing without speaker diarization")
         
         else:
             if not diarize:
@@ -280,26 +341,26 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
         end_time = time.time()
         duration = end_time - start_time
         segment_count = len(result["segments"]) if "segments" in result else 0
-        logger.info(f"[{upload_id}] RTX 5090 transcription completed, {segment_count} segments generated")
-        logger.info(f"[{upload_id}] Processing took {duration:.2f} seconds on RTX 5090")
+        logger.info(f"[{upload_id}] Transcription completed on {current_device}, {segment_count} segments generated")
+        logger.info(f"[{upload_id}] Processing took {duration:.2f} seconds")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="completed",
                 progress=100,
-                message="RTX 5090 transcription complete"
+                message=f"Transcription complete on {current_device}"
             )
         
         return result
     
     except Exception as e:
-        logger.error(f"[{upload_id}] RTX 5090 transcription failed: {str(e)}")
+        logger.error(f"[{upload_id}] Transcription failed: {str(e)}")
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="failed",
                 progress=0,
-                message=f"RTX 5090 processing failed: {str(e)}"
+                message=f"Processing failed: {str(e)}"
             )
         raise

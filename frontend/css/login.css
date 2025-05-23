@@ -107,10 +107,19 @@
     transition: all 0.3s ease;
     box-shadow: var(--button-shadow);
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
 }
 
 .auth-form .btn-block:hover {
     background-color: #1346cc;
+}
+
+.auth-form .btn-block i {
+    font-size: 16px;
+    margin-left: 4px;
 }
 
 .auth-form .btn-block.login-btn {
