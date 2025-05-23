@@ -1,0 +1,78 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ main, enhancement1 ]
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/enhancement1'    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+      
+      - name: Add host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Get branch name
+        id: branch-name
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "branch=main" >> $GITHUB_OUTPUT
+          else
+            echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Deploy to server
+        env:
+          BRANCH_NAME: ${{ steps.branch-name.outputs.branch }}
+        run: |
+          # SSH into server, clone/pull repository, build and run with docker-compose
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "bash -s" << 'ENDSSH'
+            # Go to the deploy directory
+            cd ${{ secrets.DEPLOY_DIR }}
+            
+            # If git repo doesn't exist, clone it
+            if [ ! -d ".git" ]; then
+              echo "Cloning repository..."
+              git clone ${{ github.server_url }}/${{ github.repository }} .
+            fi
+            
+            # Checkout and pull the latest code from the branch
+            git fetch --all
+            git checkout ${BRANCH_NAME}
+            git pull origin ${BRANCH_NAME}
+            
+            # Create .env file from secrets if it doesn't exist
+            if [ ! -f ".env" ]; then
+              echo "Creating .env file from secrets..."
+              cat > .env << EOF
+                YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
+                SECRET_KEY=${{ secrets.SECRET_KEY }}
+                JWT_SECRET=${{ secrets.JWT_SECRET }}
+                WHISPERX_DEVICE=${{ secrets.WHISPERX_DEVICE || 'cuda' }}
+                EOF
+            fi
+            
+            # Build and run with docker-compose
+            echo "Building and starting containers with docker-compose..."
+            docker-compose build
+            docker-compose up -d
+            
+            # Wait for services to be up
+            sleep 10
+            
+            # Show running containers
+            docker-compose ps
+            docker-compose logs --tail=30
+          ENDSSH

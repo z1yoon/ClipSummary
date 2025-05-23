@@ -1,0 +1,99 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+      
+      - name: Set up FFmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+      
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-asyncio
+          pip install -r requirements.txt
+      
+      - name: Create test directories
+        run: |
+          mkdir -p backend/uploads
+          mkdir -p backend/cache
+          mkdir -p backend/.cache/huggingface
+      
+      - name: Run unit tests
+        working-directory: ./backend
+        env:
+          DATABASE_URL: sqlite:///./clipsummary.db
+          SECRET_KEY: test_secret_key
+          JWT_SECRET: test_jwt_secret
+          JWT_ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: 30
+          TEST_MODE: true
+          WHISPERX_DEVICE: cpu
+        run: |
+          pytest tests/unit/ --cov=. --cov-report=xml --cov-report=term
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./backend/coverage.xml
+          flags: unittests
+          fail_ci_if_error: false
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package.json'
+      
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: |
+          if [ -f package.json ]; then
+            npm install
+          else
+            echo "No package.json found, skipping npm install"
+          fi
+      
+      - name: Lint JavaScript files
+        working-directory: ./frontend
+        run: |
+          if [ -f package.json ] && grep -q "\"eslint\"" package.json; then
+            npm run lint || echo "Linting errors found but continuing workflow"
+          else
+            echo "ESLint not configured, skipping linting"
+          fi
+      
+      - name: Check for JavaScript syntax errors
+        working-directory: ./frontend/js
+        run: |
+          for file in *.js; do
+            if [ -f "$file" ]; then
+              echo "Checking $file for syntax errors"
+              node --check "$file" || exit 1
+            fi
+          done

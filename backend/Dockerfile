@@ -3,6 +3,10 @@ FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
+# Set non-interactive frontend to avoid timezone prompt
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Singapore
+
 # Install only necessary system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
