@@ -36,12 +36,8 @@ COPY ./utils ./utils
 COPY ./main.py ./
 COPY ./logging.conf ./
 
-# Create a non-root user
-RUN useradd -m appuser
-
-# Create necessary directories and set proper ownership
+# Create necessary directories with wide-open permissions
 RUN mkdir -p uploads cache .cache/huggingface/hub && \
-    chown -R appuser:appuser /app && \
     chmod -R 777 uploads cache .cache
 
 # Set environment variables
@@ -50,8 +46,8 @@ ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_OFFLINE=0
 
-# Switch to non-root user
-USER appuser
+# Run as root user (removing the user restriction)
+# No USER directive means we stay as root
 
 # Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]
