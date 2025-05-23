@@ -22,6 +22,14 @@ alembic==1.13.1
 ffmpeg-python==0.2.0
 yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
 
+# PyTorch with CUDA 12.4 support for RTX 5090
+--extra-index-url https://download.pytorch.org/whl/nightly/cu124
+--pre
+torch
+torchvision
+--extra-index-url https://pypi.org/simple/
+torchaudio
+
 # AI and ML dependencies (PyTorch installed separately in Dockerfile)
 numpy>=2.0.2  # Updated to match WhisperX requirements
 whisperx==3.3.3

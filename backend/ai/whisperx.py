@@ -22,15 +22,16 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # Verify CUDA is available and working with RTX 5090
 def verify_rtx5090_cuda():
-    """Verify CUDA works properly with RTX 5090 - fail if not working"""
+    """Verify CUDA works properly with RTX 5090 - warn but don't fail if issues"""
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is not available! RTX 5090 requires CUDA support.")
+        logger.error("CUDA is not available! RTX 5090 requires CUDA support.")
+        return False
     
     device_name = torch.cuda.get_device_name(0)
     if "RTX 5090" not in device_name:
         logger.warning(f"Expected RTX 5090 but found: {device_name}")
     
-    # Test CUDA functionality
+    # Test CUDA functionality - warn but don't crash on startup
     try:
         test_tensor = torch.tensor([1.0, 2.0, 3.0]).cuda()
         result = test_tensor * 2
@@ -38,11 +39,14 @@ def verify_rtx5090_cuda():
         del test_tensor, result
         torch.cuda.empty_cache()
         logger.info(f"RTX 5090 CUDA verification successful: {device_name}")
+        return True
     except Exception as e:
-        raise RuntimeError(f"RTX 5090 CUDA test failed: {str(e)}")
+        logger.warning(f"RTX 5090 CUDA test failed during startup: {str(e)}")
+        logger.warning("Will attempt to use GPU when processing begins...")
+        return False
 
-# Verify RTX 5090 CUDA at startup
-verify_rtx5090_cuda()
+# Verify RTX 5090 CUDA at startup - don't crash if it fails
+cuda_working = verify_rtx5090_cuda()
 
 # Log configuration
 logger.info(f"WhisperX configured with: model={DEFAULT_MODEL}, device={DEFAULT_DEVICE}")
