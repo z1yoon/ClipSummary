@@ -12,7 +12,7 @@ from utils.cache import update_processing_status
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Force GPU usage - no fallbacks
+# Force GPU usage - RTX 5090 with PyTorch 2.7.0 + CUDA 12.8
 DEFAULT_MODEL = "large-v2"
 DEFAULT_DEVICE = "cuda"
 DEFAULT_COMPUTE_TYPE = "float16"
@@ -20,61 +20,34 @@ DEFAULT_COMPUTE_TYPE = "float16"
 # Force CUDA visible devices to ensure GPU is used
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-# RTX 5090 compatibility workarounds
-def apply_rtx5090_workarounds():
-    """Apply RTX 5090 compatibility workarounds"""
-    try:
-        # Force PTX JIT compilation for missing kernels
-        os.environ["CUDA_FORCE_PTX_JIT"] = "1"
-        
-        # Disable problematic CUDA features for RTX 5090
-        if torch.cuda.is_available():
-            # Disable math SDP and flash attention which may not work on RTX 5090
-            torch.backends.cuda.enable_math_sdp(False)
-            torch.backends.cuda.enable_flash_sdp(False)
-            
-            # Set memory allocation strategy
-            torch.cuda.set_per_process_memory_fraction(0.9)
-            
-            logger.info("RTX 5090 compatibility workarounds applied")
-        return True
-    except Exception as e:
-        logger.warning(f"Failed to apply RTX 5090 workarounds: {e}")
-        return False
-
-# Apply workarounds at module import
-apply_rtx5090_workarounds()
-
-# Verify CUDA is available and working with RTX 5090
+# Verify RTX 5090 CUDA compatibility
 def verify_rtx5090_cuda():
-    """Verify CUDA works properly with RTX 5090 - warn but don't fail if issues"""
+    """Verify CUDA works properly with RTX 5090"""
     if not torch.cuda.is_available():
-        logger.error("CUDA is not available! RTX 5090 requires CUDA support.")
-        return False
+        raise RuntimeError("CUDA is not available! RTX 5090 requires CUDA support.")
     
     device_name = torch.cuda.get_device_name(0)
-    if "RTX 5090" not in device_name:
-        logger.warning(f"Expected RTX 5090 but found: {device_name}")
+    cuda_version = torch.version.cuda
+    torch_version = torch.__version__
     
-    # Test CUDA functionality with RTX 5090 workarounds
+    logger.info(f"CUDA device: {device_name}")
+    logger.info(f"CUDA version: {cuda_version}")
+    logger.info(f"PyTorch version: {torch_version}")
+    
+    # Test CUDA functionality
     try:
-        # Force JIT compilation for missing kernels
-        with torch.cuda.device(0):
-            test_tensor = torch.tensor([1.0, 2.0, 3.0], device='cuda', dtype=torch.float32)
-            result = test_tensor * 2
-            assert result.is_cuda, "Tensor not on CUDA device"
-            del test_tensor, result
-            torch.cuda.empty_cache()
-        
-        logger.info(f"RTX 5090 CUDA verification successful: {device_name}")
+        test_tensor = torch.tensor([1.0, 2.0, 3.0]).cuda()
+        result = test_tensor * 2
+        assert result.is_cuda, "Tensor not on CUDA device"
+        del test_tensor, result
+        torch.cuda.empty_cache()
+        logger.info(f"RTX 5090 CUDA verification successful")
         return True
     except Exception as e:
-        logger.warning(f"RTX 5090 CUDA test failed during startup: {str(e)}")
-        logger.warning("Will attempt to use GPU when processing begins...")
-        return False
+        raise RuntimeError(f"RTX 5090 CUDA test failed: {str(e)}")
 
-# Verify RTX 5090 CUDA at startup - don't crash if it fails
-cuda_working = verify_rtx5090_cuda()
+# Verify RTX 5090 CUDA at startup
+verify_rtx5090_cuda()
 
 # Log configuration
 logger.info(f"WhisperX configured with: model={DEFAULT_MODEL}, device={DEFAULT_DEVICE}")
@@ -145,7 +118,7 @@ def wait_for_model(timeout=300):
     return False  # Timeout
 
 def load_models():
-    """Load WhisperX models into memory - GPU only, no fallbacks"""
+    """Load WhisperX models into memory on RTX 5090"""
     global asr_model, model_loading_state
     
     if asr_model is not None:
@@ -163,12 +136,12 @@ def load_models():
         model_loading_state["progress"] = 10
         model_loading_state["message"] = "Starting WhisperX model load"
         
-        logger.info(f"Loading WhisperX model ({DEFAULT_MODEL}) on {DEFAULT_DEVICE}...")
+        logger.info(f"Loading WhisperX model ({DEFAULT_MODEL}) on RTX 5090...")
         
         model_loading_state["progress"] = 50
-        model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model on GPU..."
+        model_loading_state["message"] = f"Initializing WhisperX {DEFAULT_MODEL} model on RTX 5090..."
         
-        # Load model on GPU only - no CPU fallback
+        # Load model on RTX 5090
         asr_model = whisperx.load_model(
             DEFAULT_MODEL, 
             DEFAULT_DEVICE, 
@@ -177,36 +150,36 @@ def load_models():
         )
         
         model_loading_state["progress"] = 100
-        model_loading_state["message"] = "Model loaded successfully on GPU"
+        model_loading_state["message"] = "Model loaded successfully on RTX 5090"
         
         total_time = time.time() - model_loading_state["start_time"]
-        logger.info(f"WhisperX model loaded successfully on GPU in {total_time:.2f}s")
+        logger.info(f"WhisperX model loaded successfully on RTX 5090 in {total_time:.2f}s")
         
     except Exception as e:
-        logger.error(f"Failed to load WhisperX model on GPU: {str(e)}")
+        logger.error(f"Failed to load WhisperX model on RTX 5090: {str(e)}")
         model_loading_state["progress"] = 0
-        model_loading_state["message"] = f"GPU Error: {str(e)}"
-        raise RuntimeError(f"GPU model loading failed: {str(e)}")
+        model_loading_state["message"] = f"RTX 5090 Error: {str(e)}"
+        raise RuntimeError(f"RTX 5090 model loading failed: {str(e)}")
     finally:
         model_loading_state["is_loading"] = False
         model_loading_lock.release()
 
 def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = True) -> Dict[str, Any]:
-    """Transcribe audio using WhisperX with GPU only - no CPU fallbacks"""
+    """Transcribe audio using WhisperX on RTX 5090"""
     try:
         start_time = time.time()
-        logger.info(f"[{upload_id}] Starting WhisperX transcription on GPU")
+        logger.info(f"[{upload_id}] Starting WhisperX transcription on RTX 5090")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
                 progress=10,
-                message="Loading WhisperX model on GPU..."
+                message="Loading WhisperX model on RTX 5090..."
             )
         
-        # Load model on GPU only
-        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL}) on GPU...")
+        # Load model on RTX 5090
+        logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL}) on RTX 5090...")
         
         model = whisperx.load_model(
             DEFAULT_MODEL, 
@@ -214,14 +187,14 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             compute_type=DEFAULT_COMPUTE_TYPE,
             local_files_only=False
         )
-        logger.info(f"[{upload_id}] Successfully loaded WhisperX model on GPU")
+        logger.info(f"[{upload_id}] Successfully loaded WhisperX model on RTX 5090")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="processing",
                 progress=30,
-                message="Transcribing audio on GPU..."
+                message="Transcribing audio on RTX 5090..."
             )
         
         # Load and transcribe audio
@@ -242,11 +215,11 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
                 upload_id=upload_id,
                 status="processing",
                 progress=50,
-                message="Aligning transcription on GPU..."
+                message="Aligning transcription on RTX 5090..."
             )
         
-        # Load alignment model on GPU
-        logger.info(f"[{upload_id}] Loading alignment model on GPU...")
+        # Load alignment model on RTX 5090
+        logger.info(f"[{upload_id}] Loading alignment model on RTX 5090...")
         model_a, metadata = whisperx.load_align_model(language_code=language_code, device=DEFAULT_DEVICE)
                 
         result = whisperx.align(
@@ -257,24 +230,24 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             DEFAULT_DEVICE,
             return_char_alignments=False
         )
-        logger.info(f"[{upload_id}] Alignment complete on GPU")
+        logger.info(f"[{upload_id}] Alignment complete on RTX 5090")
         
         # Free up memory
         del model_a
         gc.collect()
         torch.cuda.empty_cache()
         
-        # Speaker diarization on GPU
+        # Speaker diarization on RTX 5090
         if diarize and HF_TOKEN:
             if upload_id:
                 update_processing_status(
                     upload_id=upload_id,
                     status="processing",
                     progress=70,
-                    message="Identifying speakers on GPU..."
+                    message="Identifying speakers on RTX 5090..."
                 )
             
-            logger.info(f"[{upload_id}] Running speaker diarization on GPU...")
+            logger.info(f"[{upload_id}] Running speaker diarization on RTX 5090...")
             diarize_model = whisperx.DiarizationPipeline(
                 use_auth_token=HF_TOKEN,
                 device=DEFAULT_DEVICE
@@ -282,7 +255,7 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             
             diarize_segments = diarize_model(audio)
             result = whisperx.assign_word_speakers(diarize_segments, result)
-            logger.info(f"[{upload_id}] Speaker diarization complete on GPU")
+            logger.info(f"[{upload_id}] Speaker diarization complete on RTX 5090")
             
             # Count unique speakers
             speaker_set = set()
@@ -307,26 +280,26 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
         end_time = time.time()
         duration = end_time - start_time
         segment_count = len(result["segments"]) if "segments" in result else 0
-        logger.info(f"[{upload_id}] GPU transcription completed, {segment_count} segments generated")
-        logger.info(f"[{upload_id}] Processing took {duration:.2f} seconds on GPU")
+        logger.info(f"[{upload_id}] RTX 5090 transcription completed, {segment_count} segments generated")
+        logger.info(f"[{upload_id}] Processing took {duration:.2f} seconds on RTX 5090")
         
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="completed",
                 progress=100,
-                message="GPU transcription complete"
+                message="RTX 5090 transcription complete"
             )
         
         return result
     
     except Exception as e:
-        logger.error(f"[{upload_id}] GPU transcription failed: {str(e)}")
+        logger.error(f"[{upload_id}] RTX 5090 transcription failed: {str(e)}")
         if upload_id:
             update_processing_status(
                 upload_id=upload_id,
                 status="failed",
                 progress=0,
-                message=f"GPU processing failed: {str(e)}"
+                message=f"RTX 5090 processing failed: {str(e)}"
             )
         raise
