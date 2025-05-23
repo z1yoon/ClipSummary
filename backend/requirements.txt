@@ -30,7 +30,7 @@ torchaudio
 
 # AI and ML dependencies
 numpy>=1.24.0  # Compatible with PyTorch nightly
-whisperx==3.3.3 --no-deps  # Prevent whisperx from installing its own torch version
+whisperx==3.3.3
 transformers>=4.48.0
 accelerate==0.25.0
 hf_xet  # For improved Hugging Face Hub download performance

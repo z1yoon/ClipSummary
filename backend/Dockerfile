@@ -39,7 +39,6 @@ COPY requirements.txt .
 
 # Install all Python dependencies from requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-
 # Verify CUDA setup
 RUN python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('CUDA version:', torch.version.cuda); print('Device count:', torch.cuda.device_count()); print('PyTorch version:', torch.__version__); print('Compute capability:', torch.cuda.get_device_capability(0) if torch.cuda.is_available() else 'N/A')"
 
