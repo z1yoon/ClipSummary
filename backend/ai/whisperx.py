@@ -12,6 +12,9 @@ from utils.cache import update_processing_status
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize device variable before any potential exceptions
+device = "cpu"  # Default to CPU in case check fails
+
 # Check CUDA availability and capabilities
 try:
     device = "cuda" if torch.cuda.is_available() else "cpu"

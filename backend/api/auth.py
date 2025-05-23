@@ -1,61 +1,32 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from typing import Optional
-import sqlite3
-import uuid
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import os
 import json
+import uuid
 
-# Constants
-SECRET_KEY = "0d6913c5c949a24c8da877cc80eaeff0f0bf1428e4294194a9c898e376ceb2f1" # In a real app, store this in an env var
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # Extended to 7 days for better user experience
+from db.database import get_db
+from db.models import User, Video
+from schemas.users import UserCreate, TokenData
+
+# Constants - Load from environment variables with fallback values
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    print("WARNING: JWT_SECRET not set in environment variables. Using fallback value for development only.")
+    JWT_SECRET = os.getenv("SECRET_KEY", "jwtsecretkey")  # Fallback to SECRET_KEY for backward compatibility
+
+ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days default
 REFRESH_TOKEN_EXPIRE_DAYS = 30  # 30 days for refresh token
 
 # Setup password hashing and OAuth2
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
-
-# Initialize database
-def init_db():
-    conn = sqlite3.connect("clipsummary.db")
-    cursor = conn.cursor()
-    
-    # Create users table if it doesn't exist
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE,
-            email TEXT UNIQUE,
-            password TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    # Create videos table if it doesn't exist
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS videos (
-            id TEXT PRIMARY KEY,
-            user_id TEXT,
-            title TEXT,
-            filename TEXT,
-            upload_id TEXT UNIQUE,
-            status TEXT,
-            is_youtube BOOLEAN,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
-
-# Initialize DB on import
-init_db()
 
 # Router setup
 router = APIRouter()
@@ -74,72 +45,43 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
     return encoded_jwt
 
-def get_user(username: str):
-    conn = sqlite3.connect("clipsummary.db")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-    user = cursor.fetchone()
-    
-    conn.close()
-    
-    if user:
-        return dict(user)
-    return None
+def get_user(db: Session, username: str):
+    """Get user by username using SQLAlchemy"""
+    return db.query(User).filter(User.username == username).first()
 
-def check_email_exists(email: str) -> bool:
-    conn = sqlite3.connect("clipsummary.db")
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT email FROM users WHERE email = ?", (email,))
-    exists = cursor.fetchone() is not None
-    
-    conn.close()
-    return exists
+def check_email_exists(db: Session, email: str) -> bool:
+    """Check if email exists using SQLAlchemy"""
+    return db.query(User).filter(User.email == email).first() is not None
 
-def check_username_exists(username: str) -> bool:
-    conn = sqlite3.connect("clipsummary.db")
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT username FROM users WHERE username = ?", (username,))
-    exists = cursor.fetchone() is not None
-    
-    conn.close()
-    return exists
+def check_username_exists(db: Session, username: str) -> bool:
+    """Check if username exists using SQLAlchemy"""
+    return db.query(User).filter(User.username == username).first() is not None
 
-def create_user(username: str, email: str, password: str):
-    conn = sqlite3.connect("clipsummary.db")
-    cursor = conn.cursor()
-    
+def create_user(db: Session, username: str, email: str, password: str):
+    """Create a new user using SQLAlchemy"""
     hashed_password = get_password_hash(password)
-    user_id = str(uuid.uuid4())
+    
+    new_user = User(
+        username=username,
+        email=email,
+        hashed_password=hashed_password
+    )
     
     try:
-        cursor.execute(
-            "INSERT INTO users (id, username, email, password) VALUES (?, ?, ?, ?)",
-            (user_id, username, email, hashed_password)
-        )
-        conn.commit()
-        
-        # Create an empty user record
-        user = {
-            "id": user_id,
-            "username": username,
-            "email": email
-        }
-        
-        return user
-    except sqlite3.IntegrityError:
-        conn.close()
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return new_user
+    except Exception as e:
+        db.rollback()
+        print(f"Error creating user: {e}")
         return None
-    finally:
-        conn.close()
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Get the current user from JWT token using SQLAlchemy"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -147,19 +89,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     )
     
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
+        
+        token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
     
-    user = get_user(username)
+    user = get_user(db, username)
     if user is None:
         raise credentials_exception
-    
-    # Remove the password field for security
-    user.pop("password", None)
     
     return user
 
@@ -175,7 +116,7 @@ class TokenRefresh(BaseModel):
 
 # API Endpoints
 @router.post("/signup")
-async def signup(request: SignupRequest):
+async def signup(request: SignupRequest, db: Session = Depends(get_db)):
     if len(request.password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -183,20 +124,20 @@ async def signup(request: SignupRequest):
         )
     
     # Check email first
-    if check_email_exists(request.email):
+    if check_email_exists(db, request.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email address is already registered"
         )
     
     # Then check username
-    if check_username_exists(request.username):
+    if check_username_exists(db, request.username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username is already taken"
         )
     
-    user = create_user(request.username, request.email, request.password)
+    user = create_user(db, request.username, request.email, request.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -206,10 +147,10 @@ async def signup(request: SignupRequest):
     return {"message": "User created successfully", "username": request.username}
 
 @router.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = get_user(form_data.username)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = get_user(db, form_data.username)
     
-    if not user or not verify_password(form_data.password, user["password"]):
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -219,17 +160,17 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     # Generate access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user["username"]}, expires_delta=access_token_expires
+        data={"sub": user.username, "id": user.id}, expires_delta=access_token_expires
     )
     
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/refresh-token")
-async def refresh_token(request: TokenRefresh):
+async def refresh_token(request: TokenRefresh, db: Session = Depends(get_db)):
     """Refresh an authentication token before it expires"""
     try:
         # Verify the current token is valid
-        payload = jwt.decode(request.token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(request.token, JWT_SECRET, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(
@@ -238,7 +179,7 @@ async def refresh_token(request: TokenRefresh):
             )
         
         # Get user to ensure they still exist
-        user = get_user(username)
+        user = get_user(db, username)
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -248,7 +189,7 @@ async def refresh_token(request: TokenRefresh):
         # Generate a new token with fresh expiration
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": username}, expires_delta=access_token_expires
+            data={"sub": username, "id": user.id}, expires_delta=access_token_expires
         )
         
         return {"access_token": access_token, "token_type": "bearer"}
@@ -261,40 +202,54 @@ async def refresh_token(request: TokenRefresh):
         )
 
 @router.get("/me")
-async def get_me(current_user: dict = Depends(get_current_user)):
-    return current_user
+async def get_me(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "is_active": current_user.is_active
+    }
 
 @router.get("/my-videos")
-async def get_my_videos(current_user: dict = Depends(get_current_user)):
-    conn = sqlite3.connect("clipsummary.db")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+async def get_my_videos(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Use SQLAlchemy to get user videos
+    videos_query = db.query(Video).filter(Video.user_id == current_user.id).order_by(Video.created_at.desc())
+    videos = videos_query.all()
     
-    cursor.execute(
-        "SELECT * FROM videos WHERE user_id = ? ORDER BY created_at DESC",
-        (current_user["id"],)
-    )
-    
-    videos = []
-    for row in cursor.fetchall():
-        video_data = dict(row)
+    video_list = []
+    for video in videos:
+        video_data = {
+            "id": video.id,
+            "upload_id": video.upload_id,
+            "title": video.title,
+            "filename": video.filename,
+            "status": video.status,
+            "created_at": video.created_at,
+            "is_youtube": video.is_youtube,
+            "thumbnail_path": video.thumbnail_path,
+            "duration": video.duration,
+            "description": video.description
+        }
         
-        # Add thumbnail and additional metadata if available
-        info_path = f"uploads/{video_data['upload_id']}/info.json"
+        # Add additional metadata if available
+        info_path = f"uploads/{video.upload_id}/info.json"
         if os.path.exists(info_path):
             try:
                 with open(info_path, "r") as f:
                     info = json.load(f)
                 
-                video_data["thumbnail"] = info.get("thumbnail")
-                video_data["duration"] = info.get("duration", 0)
+                if not video_data.get("thumbnail_path") and info.get("thumbnail"):
+                    video_data["thumbnail"] = info.get("thumbnail")
+                
+                if not video_data.get("duration") and info.get("duration"):
+                    video_data["duration"] = info.get("duration", 0)
                 
                 # If title is empty in DB but exists in info, use that
                 if (not video_data["title"] or video_data["title"] == "Untitled") and info.get("title"):
                     video_data["title"] = info["title"]
                 
                 # Check status from status.json if available
-                status_path = f"uploads/{video_data['upload_id']}/status.json"
+                status_path = f"uploads/{video.upload_id}/status.json"
                 if os.path.exists(status_path):
                     try:
                         with open(status_path, "r") as f:
@@ -308,36 +263,26 @@ async def get_my_videos(current_user: dict = Depends(get_current_user)):
                     except:
                         pass  # Ignore errors reading status file
             except Exception as e:
-                print(f"Error loading info for video {video_data['upload_id']}: {str(e)}")
+                print(f"Error loading info for video {video.upload_id}: {str(e)}")
         
-        videos.append(video_data)
+        video_list.append(video_data)
     
-    conn.close()
-    
-    return {"videos": videos}
+    return {"videos": video_list}
 
 @router.delete("/me/videos/{video_id}")
-async def delete_video(video_id: str, current_user: dict = Depends(get_current_user)):
-    conn = sqlite3.connect("clipsummary.db")
-    cursor = conn.cursor()
+async def delete_video(video_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Check if the video belongs to the user
+    video = db.query(Video).filter(Video.id == video_id, Video.user_id == current_user.id).first()
     
-    # First check if the video belongs to the user
-    cursor.execute(
-        "SELECT id FROM videos WHERE id = ? AND user_id = ?",
-        (video_id, current_user["id"])
-    )
-    
-    if cursor.fetchone() is None:
-        conn.close()
+    if not video:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Video not found or does not belong to you"
         )
     
     # Delete the video record
-    cursor.execute("DELETE FROM videos WHERE id = ?", (video_id,))
-    conn.commit()
-    conn.close()
+    db.delete(video)
+    db.commit()
     
     # In a real app, you would also delete the associated files
     

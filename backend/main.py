@@ -14,6 +14,10 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import API route modules first - DON'T import whisperx here to avoid startup loading
 from api.routes import router as main_router
+# Import database modules
+from db.database import engine
+from db.models import Base
+from db import migration
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -91,10 +95,32 @@ def preload_whisperx_model():
         logger.error(f"Error pre-loading WhisperX model: {str(e)}")
         logger.info("Will load model on first request instead")
 
+# Initialize database tables
+def init_database():
+    logger.info("Initializing database...")
+    try:
+        # Create tables
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
+        
+        # Check if we need to migrate data from SQLite
+        sqlite_path = os.path.join(os.path.dirname(__file__), "clipsummary.db")
+        if os.path.exists(sqlite_path):
+            logger.info("Found SQLite database, checking if migration is needed...")
+            # Run migration in a separate thread to avoid blocking startup
+            migration_thread = threading.Thread(target=migration.sqlite_to_postgres)
+            migration_thread.daemon = True
+            migration_thread.start()
+    except Exception as e:
+        logger.error(f"Error initializing database: {str(e)}")
+
 # Start model pre-loading in background after startup
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting ClipSummary API server...")
+    
+    # Initialize database first
+    init_database()
     
     # Start preloading in background after a delay
     def delayed_preload():
