@@ -22,15 +22,19 @@ alembic==1.13.1
 ffmpeg-python==0.2.0
 yt-dlp>=2023.12.30  # Updated to latest version to fix YouTube download errors
 
+# PyTorch with CUDA 12.4 for RTX 5090 GPU support (sm_120)
+--extra-index-url https://download.pytorch.org/whl/nightly/cu124
+torch
+torchvision
+torchaudio
+
 # AI and ML dependencies
-numpy>=1.24.0  # Compatible with WhisperX and PyTorch 2.1.0
-whisperx==3.3.3
-# PyTorch and related packages are already installed in the base image
-# Do not reinstall torch as it's included in the Docker image
-transformers>=4.48.0  # Version compatible with PyTorch 2.1.0
+numpy>=1.24.0  # Compatible with PyTorch nightly
+whisperx==3.3.3 --no-deps  # Prevent whisperx from installing its own torch version
+transformers>=4.48.0
 accelerate==0.25.0
 hf_xet  # For improved Hugging Face Hub download performance
 
 # Only needed if using speaker diarization
-pyannote.audio>=3.3.2  # Using version compatible with PyTorch 2.1.0
-bitsandbytes>=0.41.1  # Version compatible with PyTorch 2.1.0
+pyannote.audio>=3.3.2
+bitsandbytes>=0.41.1

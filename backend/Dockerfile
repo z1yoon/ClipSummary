@@ -1,5 +1,32 @@
-# Stage 1: Dependencies
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime as dependencies
+# Stage 1: Base with CUDA 12.4 support for RTX 5090
+FROM nvidia/cuda:12.4.0-base-ubuntu22.04 as base
+
+# Install Python and essential tools
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-venv \
+    python3-pip \
+    ffmpeg \
+    git \
+    wget \
+    --no-install-recommends \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.10 as default python
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    ln -sf /usr/bin/python3.10 /usr/bin/python3
+
+# Create and activate virtual environment
+ENV VIRTUAL_ENV=/opt/venv
+RUN python -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Stage 2: Dependencies
+FROM base as dependencies
 
 WORKDIR /app
 
@@ -7,21 +34,16 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Singapore
 
-# Install only necessary system dependencies
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    git \
-    --no-install-recommends \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy only requirements file first to leverage Docker cache
+# Copy requirements file
 COPY requirements.txt .
 
-# Install Python dependencies, excluding PyTorch which is already installed
+# Install all Python dependencies from requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Stage 2: Runtime
+# Verify CUDA setup
+RUN python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('CUDA version:', torch.version.cuda); print('Device count:', torch.cuda.device_count()); print('PyTorch version:', torch.__version__); print('Compute capability:', torch.cuda.get_device_capability(0) if torch.cuda.is_available() else 'N/A')"
+
+# Stage 3: Runtime
 FROM dependencies as runtime
 
 WORKDIR /app
@@ -45,9 +67,9 @@ ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_OFFLINE=0
-
-# Run as root user (removing the user restriction)
-# No USER directive means we stay as root
+ENV CUDA_LAUNCH_BLOCKING=1
+# Force device index
+ENV CUDA_VISIBLE_DEVICES=0
 
 # Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]

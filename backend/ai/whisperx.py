@@ -17,18 +17,34 @@ DEFAULT_MODEL = "large-v2"
 DEFAULT_DEVICE = "cuda" 
 DEFAULT_COMPUTE_TYPE = "float16"
 
+# Force CUDA visible devices to ensure GPU is used
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 # Log configuration
 logger.info(f"WhisperX configured with: model={DEFAULT_MODEL}, device={DEFAULT_DEVICE}")
 
-# Check CUDA availability
+# More detailed CUDA check
 if torch.cuda.is_available():
     try:
         device_name = torch.cuda.get_device_name(0)
-        logger.info(f"CUDA available: {device_name}")
-    except:
-        logger.warning("CUDA available but device name could not be determined")
+        cuda_version = torch.version.cuda
+        torch_version = torch.__version__
+        device_count = torch.cuda.device_count()
+        current_device = torch.cuda.current_device()
+        
+        logger.info(f"CUDA is available: {device_count} device(s)")
+        logger.info(f"Current CUDA device: {current_device} - {device_name}")
+        logger.info(f"CUDA version: {cuda_version}, PyTorch: {torch_version}")
+        
+        # Verify CUDA is working by running a small tensor operation
+        test_tensor = torch.tensor([1.0, 2.0, 3.0]).cuda()
+        result = test_tensor * 2
+        logger.info(f"CUDA test successful: {result.cpu().numpy()}")
+    except Exception as e:
+        logger.error(f"Error during CUDA verification: {str(e)}")
 else:
-    logger.warning("CUDA not available, but we'll still try to use it as configured")
+    logger.error("CUDA NOT AVAILABLE - GPU OPERATIONS WILL FAIL!")
+    logger.error("Check that your Docker container has access to the GPU")
 
 # Get HuggingFace token from environment variables for speaker diarization
 HF_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -186,8 +202,15 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
         # 1. Load model and transcribe - use fixed constants
         logger.info(f"[{upload_id}] Loading WhisperX model ({DEFAULT_MODEL})...")
         
+        # Double-check CUDA status before loading model
+        if not torch.cuda.is_available():
+            logger.error(f"[{upload_id}] CUDA is not available! Cannot use GPU.")
+        else:
+            logger.info(f"[{upload_id}] CUDA is available: {torch.cuda.get_device_name(0)}")
+        
         try:
             # First try with GPU
+            logger.info(f"[{upload_id}] Attempting to load model with GPU (CUDA)")
             model = whisperx.load_model(
                 DEFAULT_MODEL, 
                 DEFAULT_DEVICE, 
@@ -196,7 +219,15 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             )
             logger.info(f"[{upload_id}] Successfully loaded WhisperX model with GPU")
         except Exception as e:
-            logger.warning(f"[{upload_id}] GPU load failed: {str(e)}")
+            # Log detailed error
+            logger.error(f"[{upload_id}] GPU load failed with error: {str(e)}")
+            logger.error(f"[{upload_id}] Error type: {type(e).__name__}")
+            
+            # Show traceback for better debugging
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"[{upload_id}] Error traceback: {tb}")
+            
             logger.info(f"[{upload_id}] Falling back to CPU")
             model = whisperx.load_model(
                 DEFAULT_MODEL,
