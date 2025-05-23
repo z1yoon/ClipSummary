@@ -15,6 +15,12 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Determine Python version and use it throughout the Dockerfile
+RUN python -c "import sys; print(f'Python version: {sys.version}')"
+RUN PYTHON_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')") && \
+    echo "Using Python version: $PYTHON_VERSION" && \
+    echo "PYTHON_VERSION=$PYTHON_VERSION" > /python_version.env
+
 # Copy only requirements file first to leverage Docker cache
 COPY requirements.txt .
 
@@ -27,8 +33,16 @@ FROM dependencies as runtime
 
 WORKDIR /app
 
-# Copy installed dependencies from the dependencies stage
-COPY --from=dependencies /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+# Load Python version from previous stage
+COPY --from=dependencies /python_version.env /
+RUN . /python_version.env && \
+    echo "Runtime using Python version: $PYTHON_VERSION" && \
+    SITE_PACKAGES_PATH="/usr/local/lib/python${PYTHON_VERSION}/site-packages" && \
+    echo "Site packages path: $SITE_PACKAGES_PATH"
+
+# We're using the same base image for both stages, so no need to copy site-packages
+# The dependencies installed in the first stage are already available
+
 COPY --from=dependencies /usr/local/bin /usr/local/bin
 
 # Copy only the necessary application files
