@@ -170,7 +170,7 @@ async def upload_video(
 ):
     """Upload a video file for transcription, summarization, and translation."""
     try:
-        print(f"Received upload request for file: {file.filename} from user: {current_user['username']}")
+        print(f"Received upload request for file: {file.filename} from user: {current_user.username}")
         
         # Validate file type
         if not file.filename.lower().endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov')):
@@ -228,8 +228,8 @@ async def upload_video(
             "upload_time": time.time(),
             "languages_requested": languages.split(","),
             "summary_length": summary_length,
-            "user_id": current_user["id"],
-            "user_name": current_user["username"],
+            "user_id": current_user.id,
+            "user_name": current_user.username,
             "processing_state": "metadata_only",  # Flag to indicate only metadata is available
         }
         
@@ -263,7 +263,7 @@ async def upload_video(
             cursor.execute(
                 """INSERT INTO videos (id, user_id, title, filename, upload_id, status, is_youtube) 
                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (video_id, current_user["id"], file.filename, file.filename, upload_id, "metadata_ready", False)
+                (video_id, current_user.id, file.filename, file.filename, upload_id, "metadata_ready", False)
             )
             conn.commit()
             conn.close()
@@ -388,7 +388,7 @@ async def upload_video(
             filename=file.filename,
             languages=languages.split(","),
             summary_length=summary_length,
-            user_id=current_user["id"]
+            user_id=current_user.id
         )
         
         print(f"Upload processed successfully. ID: {upload_id}")

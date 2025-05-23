@@ -57,19 +57,7 @@ jobs:
             git fetch --all
             git checkout ${BRANCH_NAME}
             git pull origin ${BRANCH_NAME}
-            
-            # Create .env file from secrets if it doesn't exist
-            if [ ! -f ".env" ]; then
-              echo "Creating .env file from secrets..."
-              cat > .env << EOF
-                YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
-                SECRET_KEY=${{ secrets.SECRET_KEY }}
-                JWT_SECRET=${{ secrets.JWT_SECRET }}
-                WHISPERX_DEVICE=${{ secrets.WHISPERX_DEVICE || 'cuda' }}
-                HUGGING_FACE_TOKEN=${{ secrets.HUGGING_FACE_TOKEN }}
-                EOF
-            fi
-            
+             
             # Build and run with docker-compose
             echo "Building and starting containers with docker-compose..."
             docker-compose build

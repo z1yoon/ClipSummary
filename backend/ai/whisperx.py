@@ -208,8 +208,14 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
     Returns:
         Dict containing transcription results with timestamps and speaker labels
     """
-    # Initialize device variable in function scope to ensure it's always defined
+    # Make sure to use the global device and compute_type
     global device, compute_type
+    
+    # Ensure device is initialized even if something failed during module initialization
+    if 'device' not in globals() or device is None:
+        device = "cpu"
+        compute_type = "int8"
+        logger.warning(f"[{upload_id}] Device was not initialized, falling back to CPU")
     
     try:
         start_time = time.time()
