@@ -989,6 +989,9 @@ async def upload_chunk(
     current_user: dict = Depends(get_current_user)
 ):
     """Upload a single chunk of a file."""
+    import asyncio
+    import aiofiles
+    
     try:
         # Verify session exists
         if upload_id not in chunked_uploads:
@@ -1006,17 +1009,24 @@ async def upload_chunk(
                 detail="Access denied"
             )
         
-        # Save chunk
+        # Save chunk using async file operations to prevent blocking
         chunk_path = f"uploads/{upload_id}/chunks/chunk_{chunk_index:06d}"
         
-        with open(chunk_path, "wb") as f:
-            content = await chunk.read()
-            f.write(content)
+        # Read chunk content asynchronously
+        content = await chunk.read()
+        content_size = len(content)
         
-        # Mark chunk as received
+        # Write chunk asynchronously to prevent blocking other requests
+        async with aiofiles.open(chunk_path, "wb") as f:
+            await f.write(content)
+            await f.fsync()  # Ensure data is written to disk
+        
+        # Mark chunk as received (this is thread-safe for basic operations)
         session["chunks_received"].add(chunk_index)
         
-        print(f"Received chunk {chunk_index} for upload {upload_id} ({len(content)} bytes)")
+        # Log less frequently to reduce I/O overhead
+        if chunk_index % 10 == 0 or chunk_index < 5:
+            print(f"Received chunk {chunk_index} for upload {upload_id} ({content_size} bytes)")
         
         return {
             "success": True,
@@ -1029,7 +1039,7 @@ async def upload_chunk(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error uploading chunk: {str(e)}")
+        print(f"Error uploading chunk {chunk_index} for {upload_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload chunk: {str(e)}"

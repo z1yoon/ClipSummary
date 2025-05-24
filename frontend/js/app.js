@@ -357,10 +357,11 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
 
-            // Upload chunks in parallel for maximum speed - INCREASED FROM 3 TO 5!
-            const maxConcurrent = 5; // Upload 5 chunks simultaneously for faster uploads
-            const uploadPromises = [];
+            // Upload chunks with better error handling and reduced concurrency for large files
+            const maxConcurrent = file.size > 2 * 1024 * 1024 * 1024 ? 3 : 5; // Use 3 for files > 2GB, 5 for smaller files
             let completedChunks = 0;
+
+            console.log(`Using ${maxConcurrent} concurrent uploads for ${(file.size / (1024 * 1024 * 1024)).toFixed(2)}GB file`);
 
             for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += maxConcurrent) {
                 const batch = [];
@@ -370,21 +371,35 @@ document.addEventListener('DOMContentLoaded', function() {
                     batch.push(uploadChunk(file, currentChunk, CHUNK_SIZE, uploadId, totalChunks));
                 }
 
-                // Wait for this batch to complete
-                const batchResults = await Promise.all(batch);
-                completedChunks += batchResults.length;
+                try {
+                    console.log(`Uploading batch: chunks ${chunkIndex} to ${chunkIndex + batch.length - 1}`);
+                    
+                    // Wait for this batch to complete with better error handling
+                    const batchResults = await Promise.all(batch);
+                    completedChunks += batchResults.length;
 
-                // Update progress in localStorage and UI
-                uploadProgress.completedChunks = completedChunks;
-                localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
+                    console.log(`Batch completed: ${completedChunks}/${totalChunks} chunks uploaded`);
 
-                // Update progress
-                const progress = Math.round((completedChunks / totalChunks) * 90); // Reserve 10% for finalization
-                showProcessingStatus({
-                    status: 'uploading',
-                    progress: progress,
-                    message: `Uploading chunks: ${completedChunks}/${totalChunks} complete (${progress}%) - 5 parallel uploads`
-                });
+                    // Update progress in localStorage and UI
+                    uploadProgress.completedChunks = completedChunks;
+                    localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
+
+                    // Update progress
+                    const progress = Math.round((completedChunks / totalChunks) * 90); // Reserve 10% for finalization
+                    showProcessingStatus({
+                        status: 'uploading',
+                        progress: progress,
+                        message: `Uploading chunks: ${completedChunks}/${totalChunks} complete (${progress}%) - ${maxConcurrent} parallel uploads`
+                    });
+
+                    // Add a small delay between batches for large files to prevent overwhelming the server
+                    if (file.size > 2 * 1024 * 1024 * 1024 && chunkIndex + maxConcurrent < totalChunks) {
+                        await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between batches for large files
+                    }
+                } catch (error) {
+                    console.error(`Batch upload failed for chunks ${chunkIndex}-${chunkIndex + batch.length - 1}:`, error);
+                    throw new Error(`Chunk upload failed at batch ${Math.floor(chunkIndex / maxConcurrent) + 1}: ${error.message}`);
+                }
             }
 
             // Update progress for finalization
