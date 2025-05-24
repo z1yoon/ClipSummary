@@ -227,202 +227,55 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function trackProcessing(uploadId) {
-        // Define the expected backend processing stages with their associated messages
-        const processingStages = [
-            { progress: 15, message: "Loading WhisperX ASR model...", startTime: null },
-            { progress: 25, message: "Extracting audio from video...", startTime: null },
-            { progress: 40, message: "Transcribing audio with WhisperX...", startTime: null },
-            { progress: 60, message: "Aligning transcription with audio...", startTime: null },
-            { progress: 75, message: "Generating summary from transcript...", startTime: null },
-            { progress: 85, message: "Translating content to requested languages...", startTime: null },
-            { progress: 95, message: "Finalizing video processing...", startTime: null }
-        ];
-        
-        let currentStageIndex = 0;
-        let lastProgressData = null;
         let processingStartTime = Date.now();
-        
-        // Initialize the first stage's start time
-        processingStages[0].startTime = processingStartTime;
         
         const checkStatus = async () => {
             try {
                 const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
                 const data = await response.json();
                 
-                // Keep track of the last data to avoid blinking on network errors
-                if (data) {
-                    lastProgressData = data;
-                }
+                console.log('Processing status:', data);
                 
-                // Check for specific backend messages to match with our stages
-                if (data.message) {
-                    const lowerMessage = data.message.toLowerCase();
-                    
-                    // Check for WhisperX model loading
-                    if (lowerMessage.includes('whisperx') && lowerMessage.includes('model')) {
-                        if (currentStageIndex < 1) {
-                            currentStageIndex = 0;
-                            if (!processingStages[0].startTime) {
-                                processingStages[0].startTime = Date.now();
-                            }
-                        }
-                    }
-                    // Check for audio extraction
-                    else if (lowerMessage.includes('extract') && lowerMessage.includes('audio')) {
-                        if (currentStageIndex < 2) {
-                            currentStageIndex = 1;
-                            if (!processingStages[1].startTime) {
-                                processingStages[1].startTime = Date.now();
-                            }
-                        }
-                    }
-                    // Check for transcription
-                    else if (lowerMessage.includes('transcrib')) {
-                        if (currentStageIndex < 3) {
-                            currentStageIndex = 2;
-                            if (!processingStages[2].startTime) {
-                                processingStages[2].startTime = Date.now();
-                            }
-                        }
-                    }
-                    // Check for alignment
-                    else if (lowerMessage.includes('align')) {
-                        if (currentStageIndex < 4) {
-                            currentStageIndex = 3;
-                            if (!processingStages[3].startTime) {
-                                processingStages[3].startTime = Date.now();
-                            }
-                        }
-                    }
-                    // Check for summarization
-                    else if (lowerMessage.includes('summary') || lowerMessage.includes('generat')) {
-                        if (currentStageIndex < 5) {
-                            currentStageIndex = 4;
-                            if (!processingStages[4].startTime) {
-                                processingStages[4].startTime = Date.now();
-                            }
-                        }
-                    }
-                    // Check for translation
-                    else if (lowerMessage.includes('translat')) {
-                        if (currentStageIndex < 6) {
-                            currentStageIndex = 5;
-                            if (!processingStages[5].startTime) {
-                                processingStages[5].startTime = Date.now();
-                            }
-                        }
-                    }
-                    // Check for finalization
-                    else if (lowerMessage.includes('finaliz') || lowerMessage.includes('finish')) {
-                        if (currentStageIndex < 7) {
-                            currentStageIndex = 6;
-                            if (!processingStages[6].startTime) {
-                                processingStages[6].startTime = Date.now();
-                            }
-                        }
-                    }
-                }
-                
-                // If backend doesn't provide detailed status, show predicted stages
-                if (data.status === 'processing' && data.progress > 0) {
-                    // Only move to next stage if we're still processing and progress has increased
-                    if (data.progress >= processingStages[currentStageIndex].progress && 
-                        currentStageIndex < processingStages.length - 1) {
-                        currentStageIndex++;
-                        // Set the start time for this stage if it's not set yet
-                        if (!processingStages[currentStageIndex].startTime) {
-                            processingStages[currentStageIndex].startTime = Date.now();
-                        }
-                    }
-                }
-                
-                // Calculate the elapsed time for current stage
-                const currentStage = processingStages[currentStageIndex];
-                const elapsedTimeForStage = currentStage.startTime ? Math.floor((Date.now() - currentStage.startTime) / 1000) : 0;
+                // Calculate elapsed time
                 const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
-
-                // Format times for display
-                const elapsedTimeForStageFormatted = formatTime(elapsedTimeForStage);
                 const totalElapsedTimeFormatted = formatTime(totalElapsedTime);
                 
-                // Use backend message if it's specific, otherwise use our staged messages with elapsed time
-                let message = data.message;
-                if (!message || message.includes('processing') || message.includes('Processing')) {
-                    message = `${currentStage.message} (${elapsedTimeForStageFormatted})`;
-                }
-                
-                // Add elapsed time to the data we'll show
-                const updatedData = {
+                // Use real backend data only
+                const statusData = {
                     ...data,
-                    message,
                     elapsedTime: totalElapsedTimeFormatted,
-                    totalElapsedSeconds: totalElapsedTime,
-                    stageElapsedSeconds: elapsedTimeForStage,
+                    totalElapsedSeconds: totalElapsedTime
                 };
                 
-                // Update the UI with the current status
-                showProcessingStatus(updatedData);
+                // Update the UI with real status
+                showProcessingStatus(statusData);
                 
                 if (data.status === 'completed') {
-                    const finalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
-                    const finalElapsedTimeFormatted = formatTime(finalElapsedTime);
-                    
                     showProcessingStatus({
                         status: 'completed',
                         progress: 100, 
-                        message: `Processing completed successfully! Total time: ${finalElapsedTimeFormatted}`,
-                        elapsedTime: finalElapsedTimeFormatted,
+                        message: `Processing completed successfully! Total time: ${totalElapsedTimeFormatted}`,
+                        elapsedTime: totalElapsedTimeFormatted,
                     });
                     
-                    // Wait a moment before redirecting to the results page
                     setTimeout(() => {
                         window.location.href = `/video.html?id=${uploadId}`;
                     }, 2500);
-                } else if (data.status === 'failed') {
+                } else if (data.status === 'failed' || data.status === 'error') {
                     showError(data.message || 'Processing failed');
                 } else {
-                    // Continue checking status at a reasonable interval
+                    // Continue checking status
                     setTimeout(checkStatus, 3000);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
-                
-                // If we have previous data, keep showing it to prevent blinking
-                if (lastProgressData) {
-                    // Move to next stage on error to show progress
-                    if (currentStageIndex < processingStages.length - 1) {
-                        currentStageIndex++;
-                        // Set the start time for this stage if it's not set yet
-                        if (!processingStages[currentStageIndex].startTime) {
-                            processingStages[currentStageIndex].startTime = Date.now();
-                        }
-                    }
-                    
-                    const currentStage = processingStages[currentStageIndex];
-                    const elapsedTimeForStage = currentStage.startTime ? Math.floor((Date.now() - currentStage.startTime) / 1000) : 0;
-                    const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
-                    
-                    const updatedData = {
-                        ...lastProgressData,
-                        message: `${currentStage.message} (${formatTime(elapsedTimeForStage)})`,
-                        progress: currentStage.progress,
-                        elapsedTime: formatTime(totalElapsedTime),
-                    };
-                    
-                    showProcessingStatus(updatedData);
-                } else {
-                    // Only show error if we have no previous data to display
-                    showError('Failed to check processing status');
-                }
-                
                 // Continue checking despite errors
                 setTimeout(checkStatus, 5000);
             }
         };
 
-        // Start checking status
-        setTimeout(checkStatus, 2000);
+        // Start checking status immediately
+        checkStatus();
     }
 
     function showProcessingStatus(data) {
@@ -670,42 +523,13 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     function trackVideoProcessing(videoId) {
-        const startTime = Date.now();
-        let processingStep = 1;
-        const processingSteps = [
-            { progress: 10, message: "Extracting video information..." },
-            { progress: 20, message: "Downloading audio..." },
-            { progress: 40, message: "Transcribing audio..." },
-            { progress: 60, message: "Generating summary..." },
-            { progress: 80, message: "Preparing results..." }
-        ];
-        
-        const showNextStep = () => {
-            if (processingStep < processingSteps.length) {
-                const step = processingSteps[processingStep];
-                showProcessingStatus({
-                    status: 'processing',
-                    progress: step.progress,
-                    message: step.message,
-                    startTime: startTime
-                });
-                processingStep++;
-            }
-        };
-        
-        // Schedule progressive steps to show activity
-        const stepInterval = setInterval(() => {
-            showNextStep();
-        }, 8000); // Show a new step approximately every 8 seconds
+        let processingStartTime = Date.now();
 
         const checkStatus = async () => {
             try {
-                // Use the correct video status endpoint instead of YouTube status endpoint
                 const response = await fetchWithAuth(`/api/videos/${videoId}/status`);
                 if (!response.ok) {
                     if (response.status === 404) {
-                        // Video not found - stop polling and show error
-                        clearInterval(stepInterval);
                         showError('Video not found. It may have been deleted or processing failed.');
                         return;
                     }
@@ -715,55 +539,47 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 console.log('Video processing status:', data);
                 
+                // Calculate elapsed time
+                const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
+                const totalElapsedTimeFormatted = formatTime(totalElapsedTime);
+                
+                // Use real backend data only
+                const statusData = {
+                    ...data,
+                    elapsedTime: totalElapsedTimeFormatted,
+                    totalElapsedSeconds: totalElapsedTime
+                };
+                
+                // Update the UI with real status
+                showProcessingStatus(statusData);
+                
                 if (data.status === 'completed') {
-                    // Clear the step interval
-                    clearInterval(stepInterval);
-                    
-                    // Show completion
                     showProcessingStatus({
                         status: 'completed',
                         progress: 100,
-                        message: 'Processing completed successfully!',
-                        startTime: startTime
+                        message: `Processing completed successfully! Total time: ${totalElapsedTimeFormatted}`,
+                        elapsedTime: totalElapsedTimeFormatted,
                     });
                     
-                    // Wait a moment to show the completion message
                     setTimeout(() => {
                         window.location.href = `/video.html?id=${videoId}`;
                     }, 1500);
                     
                 } else if (data.status === 'failed' || data.status === 'error') {
-                    // Clear the step interval
-                    clearInterval(stepInterval);
-                    
                     showError(data.message || 'Processing failed');
                     
                 } else {
-                    // Update progress if available from backend
-                    if (data.progress) {
-                        showProcessingStatus({
-                            status: 'processing',
-                            progress: data.progress,
-                            message: data.message || processingSteps[Math.min(processingStep, processingSteps.length - 1)].message,
-                            startTime: startTime
-                        });
-                    }
-                    
                     // Continue checking
                     setTimeout(checkStatus, 3000);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
-                // Still continue checking despite errors, but less frequently
                 setTimeout(checkStatus, 5000);
             }
         };
 
-        // Start checking status
-        setTimeout(checkStatus, 2000);
-        
-        // Show first step immediately
-        showNextStep();
+        // Start checking status immediately
+        checkStatus();
     }
 
     function isValidYouTubeUrl(url) {

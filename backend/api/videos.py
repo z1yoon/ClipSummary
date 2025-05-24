@@ -817,3 +817,61 @@ async def delete_video(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting video: {str(e)}"
         )
+
+@router.get("/{video_id}/status")
+async def get_video_status(
+    video_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get processing status of a video"""
+    try:
+        # Check if video directory exists
+        video_dir = f"uploads/{video_id}"
+        if not os.path.exists(video_dir):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Video not found"
+            )
+        
+        # Check for result.json (completed processing)
+        result_path = os.path.join(video_dir, "result.json")
+        if os.path.exists(result_path):
+            return {
+                "status": "completed",
+                "progress": 100,
+                "message": "Video processing completed successfully",
+                "video_id": video_id
+            }
+        
+        # Check for info.json (video uploaded, processing may be in progress)
+        info_path = os.path.join(video_dir, "info.json")
+        if os.path.exists(info_path):
+            # Check if there's a processing status file
+            status_path = os.path.join(video_dir, "status.json")
+            if os.path.exists(status_path):
+                with open(status_path, "r") as f:
+                    status_data = json.load(f)
+                return status_data
+            else:
+                # If info.json exists but no status.json and no result.json,
+                # assume processing is still in progress
+                return {
+                    "status": "processing",
+                    "progress": 50,
+                    "message": "Video processing in progress...",
+                    "video_id": video_id
+                }
+        
+        # If neither file exists, video not found
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Video not found"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error checking video status: {str(e)}"
+        )
