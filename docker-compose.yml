@@ -16,6 +16,7 @@ services:
       - "80:80"
     volumes:
       - ./nginx/conf:/etc/nginx/conf.d
+      - ./uploads:/var/www/uploads:ro  # Serve uploads as static files (read-only)
     depends_on:
       - frontend
       - backend
@@ -27,9 +28,9 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./backend:/app
-      - backend-uploads:/app/uploads
-      - backend-cache:/app/cache
-      - ./models:/app/.cache/huggingface
+      - ./uploads:/app/uploads  # Bind mount for uploads
+      - ./cache:/app/cache      # Bind mount for cache (easier debugging)
+      - ./models:/app/.cache/huggingface  # Bind mount for models
     environment:
       - PYTHONUNBUFFERED=1
       - TRANSFORMERS_CACHE=/app/.cache/huggingface
@@ -54,17 +55,17 @@ services:
       interval: 30s
       timeout: 15s
       retries: 5
-      start_period: 180s  # Increased for AI model loading
+      start_period: 180s
 
   redis:
     image: redis:alpine
     volumes:
-      - redis-data:/data
+      - redis-data:/data  # Named volume is fine for Redis
 
   postgres:
     image: postgres:13
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data  # Named volume is fine for DB
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-clipsummary}
       - POSTGRES_USER=${POSTGRES_USER:-clipsummary}
@@ -76,5 +77,3 @@ services:
 volumes:
   redis-data:
   postgres-data:
-  backend-uploads:
-  backend-cache:

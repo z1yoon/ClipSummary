@@ -40,21 +40,69 @@ async def get_video_details(
 ):
     """Get video details including available languages and summary"""
     try:
-        # Check if video info exists
+        # Check if video info exists (for uploaded videos)
         info_path = f"uploads/{video_id}/info.json"
-        if not os.path.exists(info_path):
+        result_path = f"uploads/{video_id}/result.json"
+        
+        # Initialize default values
+        video_info = {}
+        summary = None
+        available_languages = ["en"]
+        video_url = None
+        original_url = None
+        
+        # Try to load from info.json first (uploaded videos)
+        if os.path.exists(info_path):
+            with open(info_path, "r") as f:
+                video_info = json.load(f)
+            
+            # Check for local video file
+            if os.path.exists(f"uploads/{video_id}/video.mp4"):
+                video_url = f"/uploads/{video_id}/video.mp4"
+        
+        # Try to load from result.json (YouTube videos)
+        elif os.path.exists(result_path):
+            with open(result_path, "r") as f:
+                result_data = json.load(f)
+            
+            # Extract video info from result data
+            video_info = {
+                "title": result_data.get("title", "Untitled"),
+                "url": result_data.get("url"),
+                "video_id": result_data.get("video_id"),
+                "duration": 0  # YouTube videos don't have local duration
+            }
+            
+            # Get summary from result data
+            summary_data = result_data.get("summary", {})
+            if isinstance(summary_data, dict):
+                summary = summary_data.get("en")
+            else:
+                summary = summary_data
+                
+            # Get available languages from translations
+            available_languages = ["en"]
+            if "translations" in result_data:
+                available_languages.extend(result_data["translations"].keys())
+        
+        else:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Video not found"
             )
 
-        # Read video info
-        with open(info_path, "r") as f:
-            info = json.load(f)
+        # If we still don't have summary, try loading from result.json for uploaded videos
+        if not summary and os.path.exists(result_path):
+            with open(result_path, "r") as f:
+                result = json.load(f)
+                summary_data = result.get("summary", {})
+                if isinstance(summary_data, dict):
+                    summary = summary_data.get("en")
+                else:
+                    summary = summary_data
 
-        # Get subtitle languages
+        # Get subtitle languages from subtitles directory
         subtitles_dir = f"uploads/{video_id}/subtitles"
-        available_languages = ["en"] # Default to English
         if os.path.exists(subtitles_dir):
             for file in os.listdir(subtitles_dir):
                 if file.endswith('.json'):
@@ -70,32 +118,19 @@ async def get_video_details(
                     if file not in available_languages:
                         available_languages.append(file)
 
-        # Get video URL
-        video_url = f"/uploads/{video_id}/video.mp4"
-        if not os.path.exists(f"uploads/{video_id}/video.mp4"):
-            # For YouTube videos, we might not have a local video file
-            video_url = None
-
-        # Load result file for summary if available
-        summary = None
-        result_path = f"uploads/{video_id}/result.json"
-        if os.path.exists(result_path):
-            with open(result_path, "r") as f:
-                result = json.load(f)
-                summary = result.get("summary", {}).get("en")
-        
-        # Get original video URL if it exists (for YouTube videos)
-        original_url = info.get("url", None)
+        # Get original video URL (for YouTube videos)
+        original_url = video_info.get("url", None)
 
         return {
             "video_id": video_id,
-            "title": info.get("title", "Untitled"),
+            "title": video_info.get("title", "Untitled"),
             "video_url": video_url,
             "url": original_url,
-            "thumbnail": info.get("thumbnail"),
-            "duration": info.get("duration"),
+            "thumbnail": video_info.get("thumbnail"),
+            "duration": video_info.get("duration", 0),
             "available_languages": available_languages,
-            "summary": summary
+            "summary": summary,
+            "status": "completed"  # If we can load the data, it's completed
         }
 
     except HTTPException:
@@ -115,56 +150,89 @@ async def get_video_subtitles(
     """Get subtitles for a specific language"""
     try:
         subtitle_path = f"uploads/{video_id}/subtitles/{language}.json"
-        if not os.path.exists(subtitle_path):
-            # If the requested language doesn't exist, try to translate from English
-            en_subtitle_path = f"uploads/{video_id}/subtitles/en.json"
-            if not os.path.exists(en_subtitle_path):
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Subtitles not found for language: {language}"
-                )
-            
-            # Check if we have a cached translation
-            cache_key = f"subtitles_{video_id}_{language}"
-            cached = get_cached_result(cache_key)
-            if cached:
-                return cached
-            
-            # Translate from English
-            with open(en_subtitle_path, "r") as f:
-                en_subtitles = json.load(f)
-            
-            # Create subtitles directory if it doesn't exist
-            os.makedirs(os.path.dirname(subtitle_path), exist_ok=True)
-            
-            # Translate subtitle segments
-            translated_segments = []
-            for segment in en_subtitles["segments"]:
-                translated_text = await translate_text(segment["text"], language)
-                translated_segments.append({
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "text": translated_text
-                })
-            
-            translated_subtitles = {
-                "segments": translated_segments,
-                "language": language
-            }
-            
-            # Save translated subtitles
-            with open(subtitle_path, "w") as f:
-                json.dump(translated_subtitles, f, ensure_ascii=False)
-            
-            # Cache the result
-            cache_result(cache_key, translated_subtitles)
-            
-            return translated_subtitles
         
-        with open(subtitle_path, "r") as f:
-            subtitles = json.load(f)
-
-        return subtitles
+        # First, check if we have dedicated subtitle files
+        if os.path.exists(subtitle_path):
+            with open(subtitle_path, "r") as f:
+                subtitles = json.load(f)
+            return subtitles
+        
+        # For YouTube videos, check if we have transcript data in result.json
+        result_path = f"uploads/{video_id}/result.json"
+        if os.path.exists(result_path):
+            with open(result_path, "r") as f:
+                result_data = json.load(f)
+            
+            # Check for English transcript first
+            if language == "en" and "transcript" in result_data:
+                transcript = result_data["transcript"]
+                if "segments" in transcript:
+                    return {
+                        "segments": transcript["segments"],
+                        "language": "en"
+                    }
+            
+            # Check for translated transcripts
+            elif language != "en" and "translations" in result_data:
+                if language in result_data["translations"] and "transcript" in result_data["translations"][language]:
+                    return {
+                        "segments": result_data["translations"][language]["transcript"],
+                        "language": language
+                    }
+        
+        # If we don't have the requested language, try to translate from English
+        # First check if we have English subtitles/transcript
+        en_subtitle_path = f"uploads/{video_id}/subtitles/en.json"
+        en_segments = None
+        
+        if os.path.exists(en_subtitle_path):
+            with open(en_subtitle_path, "r") as f:
+                en_data = json.load(f)
+                en_segments = en_data.get("segments", [])
+        elif os.path.exists(result_path):
+            with open(result_path, "r") as f:
+                result_data = json.load(f)
+                if "transcript" in result_data and "segments" in result_data["transcript"]:
+                    en_segments = result_data["transcript"]["segments"]
+        
+        if not en_segments:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No transcript data found for translation to {language}"
+            )
+        
+        # Check if we have a cached translation
+        cache_key = f"subtitles_{video_id}_{language}"
+        cached = get_cached_result(cache_key)
+        if cached:
+            return cached
+        
+        # Create subtitles directory if it doesn't exist
+        os.makedirs(os.path.dirname(subtitle_path), exist_ok=True)
+        
+        # Translate subtitle segments
+        translated_segments = []
+        for segment in en_segments:
+            translated_text = await translate_text(segment["text"], language)
+            translated_segments.append({
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": translated_text
+            })
+        
+        translated_subtitles = {
+            "segments": translated_segments,
+            "language": language
+        }
+        
+        # Save translated subtitles
+        with open(subtitle_path, "w") as f:
+            json.dump(translated_subtitles, f, ensure_ascii=False)
+        
+        # Cache the result
+        cache_result(cache_key, translated_subtitles)
+        
+        return translated_subtitles
 
     except HTTPException:
         raise
@@ -279,6 +347,15 @@ async def get_video_summary(
             detail=f"Error retrieving summary: {str(e)}"
         )
 
+@router.get("/")
+async def list_all_videos(
+    current_user: dict = Depends(get_current_user),
+    skip: int = Query(0, description="Skip the first N videos"),
+    limit: int = Query(20, description="Limit the number of videos returned")
+):
+    """List all videos - this is what the frontend expects at /api/videos"""
+    return await list_user_videos(current_user, skip, limit)
+
 @router.get("/user/videos")
 async def list_user_videos(
     current_user: dict = Depends(get_current_user),
@@ -293,63 +370,205 @@ async def list_user_videos(
         if cached_result:
             return cached_result
             
-        # Get videos from database
-        import sqlite3
-        
-        conn = sqlite3.connect("clipsummary.db")
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        # Query videos for the current user, ordered by most recent first
-        cursor.execute(
-            "SELECT id, upload_id, title, filename, status, created_at FROM videos WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (current_user["id"], limit, skip)
-        )
-        
+        # Get videos from uploads directory (since you don't seem to be using the database)
+        uploads_dir = "uploads"
         videos = []
-        upload_ids = []
-        for row in cursor.fetchall():
-            video_data = dict(row)
-            videos.append(video_data)
-            upload_ids.append(video_data['upload_id'])
         
-        conn.close()
+        # Check if uploads directory exists
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir, exist_ok=True)
+            return {"videos": [], "count": 0, "skip": skip, "limit": limit}
         
-        # Bulk load metadata for all videos at once (more efficient)
-        thumbnail_data = {}
-        for upload_id in upload_ids:
-            info_path = f"uploads/{upload_id}/info.json"
-            if os.path.exists(info_path):
-                try:
-                    with open(info_path, "r") as f:
-                        info = json.load(f)
+        # Scan uploads directory for video folders
+        try:
+            for item in os.listdir(uploads_dir):
+                item_path = os.path.join(uploads_dir, item)
+                if os.path.isdir(item_path):
+                    # Check if this folder has video data
+                    info_path = os.path.join(item_path, "info.json")
+                    result_path = os.path.join(item_path, "result.json")
                     
-                    thumbnail_data[upload_id] = {
-                        "thumbnail": info.get("thumbnail"),
-                        "duration": info.get("duration", 0)
-                    }
-                except Exception as e:
-                    print(f"Error loading info for video {upload_id}: {str(e)}")
+                    video_data = None
+                    
+                    # Try to load from info.json (uploaded videos)
+                    if os.path.exists(info_path):
+                        try:
+                            with open(info_path, "r") as f:
+                                info = json.load(f)
+                            video_data = {
+                                "id": item,
+                                "upload_id": item,
+                                "title": info.get("title", "Untitled"),
+                                "filename": info.get("filename", ""),
+                                "status": "completed",
+                                "created_at": info.get("created_at", time.time()),
+                                "thumbnail": info.get("thumbnail"),
+                                "duration": info.get("duration", 0),
+                                "url": None  # Local upload
+                            }
+                        except Exception as e:
+                            print(f"Error loading info.json for {item}: {e}")
+                            continue
+                    
+                    # Try to load from result.json (YouTube videos)
+                    elif os.path.exists(result_path):
+                        try:
+                            with open(result_path, "r") as f:
+                                result = json.load(f)
+                            video_data = {
+                                "id": item,
+                                "upload_id": item,
+                                "title": result.get("title", "Untitled"),
+                                "filename": result.get("title", ""),
+                                "status": "completed",
+                                "created_at": result.get("created_at", time.time()),
+                                "thumbnail": result.get("thumbnail"),
+                                "duration": result.get("duration", 0),
+                                "url": result.get("url")  # YouTube URL
+                            }
+                        except Exception as e:
+                            print(f"Error loading result.json for {item}: {e}")
+                            continue
+                    
+                    if video_data:
+                        videos.append(video_data)
         
-        # Add metadata to video objects
-        for video in videos:
-            if video['upload_id'] in thumbnail_data:
-                video.update(thumbnail_data[video['upload_id']])
+        except PermissionError as e:
+            print(f"Permission error accessing uploads directory: {e}")
+            return {"videos": [], "count": 0, "skip": skip, "limit": limit, "error": "Permission denied"}
+        
+        # Sort by created_at (most recent first)
+        videos.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+        
+        # Apply pagination
+        total_count = len(videos)
+        videos = videos[skip:skip + limit]
         
         result = {
             "videos": videos,
             "count": len(videos),
+            "total": total_count,
             "skip": skip,
             "limit": limit
         }
         
-        # Cache the result for 5 minutes (adjust TTL as needed)
+        # Cache the result for 5 minutes
         cache_result(cache_key, result, ttl=300)
         
         return result
         
     except Exception as e:
+        print(f"Error in list_user_videos: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving videos: {str(e)}"
+        )
+
+@router.post("/{video_id}/generate-subtitles")
+async def generate_all_subtitles(
+    video_id: str,
+    current_user: dict = Depends(get_current_user),
+    request: Optional[Dict] = None
+):
+    """Generate subtitles in all supported languages or specified languages"""
+    try:
+        from ai.multilingual import generate_multilingual_subtitles, SUPPORTED_LANGUAGES
+        
+        # Parse request body if provided
+        if request:
+            languages = request.get('languages', None)
+        else:
+            languages = None
+        
+        # Check if video exists
+        result_path = f"uploads/{video_id}/result.json"
+        info_path = f"uploads/{video_id}/info.json"
+        
+        if not os.path.exists(result_path) and not os.path.exists(info_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Video not found"
+            )
+        
+        # Get transcript segments from the appropriate source
+        original_segments = []
+        
+        # Try to load from result.json first (YouTube videos or completed processing)
+        if os.path.exists(result_path):
+            with open(result_path, "r") as f:
+                result_data = json.load(f)
+                
+            if "transcript" in result_data and "segments" in result_data["transcript"]:
+                original_segments = result_data["transcript"]["segments"]
+        
+        # If no segments found, try loading from subtitles/en.json
+        if not original_segments:
+            en_subtitle_path = f"uploads/{video_id}/subtitles/en.json"
+            if os.path.exists(en_subtitle_path):
+                with open(en_subtitle_path, "r") as f:
+                    en_data = json.load(f)
+                    original_segments = en_data.get("segments", [])
+        
+        if not original_segments:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No transcript data found for subtitle generation"
+            )
+        
+        # Determine which languages to generate
+        if languages is None:
+            target_languages = list(SUPPORTED_LANGUAGES.keys())
+        else:
+            # Validate requested languages
+            invalid_languages = [lang for lang in languages if lang not in SUPPORTED_LANGUAGES]
+            if invalid_languages:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unsupported languages: {invalid_languages}"
+                )
+            target_languages = languages
+        
+        # Generate subtitles
+        subtitle_results = await generate_multilingual_subtitles(
+            video_id=video_id,
+            original_segments=original_segments,
+            source_language="en"
+        )
+        
+        # Filter results to only requested languages if specified
+        if languages is not None:
+            subtitle_results = {lang: data for lang, data in subtitle_results.items() if lang in languages}
+        
+        return {
+            "video_id": video_id,
+            "generated_languages": list(subtitle_results.keys()),
+            "total_generated": len(subtitle_results),
+            "supported_languages": SUPPORTED_LANGUAGES,
+            "status": "completed"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating subtitles: {str(e)}"
+        )
+
+@router.get("/{video_id}/subtitle-stats")
+async def get_subtitle_statistics(
+    video_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get statistics about available subtitles for a video"""
+    try:
+        from ai.multilingual import get_subtitle_stats
+        
+        stats = get_subtitle_stats(video_id)
+        return stats
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving subtitle statistics: {str(e)}"
         )

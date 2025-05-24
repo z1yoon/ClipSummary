@@ -313,12 +313,16 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
             
             logger.info(f"[{upload_id}] Running speaker diarization on {current_device}...")
             try:
+                # Updated diarization implementation for WhisperX 3.3.4
                 diarize_model = whisperx.DiarizationPipeline(
                     use_auth_token=HF_TOKEN,
                     device=current_device
                 )
                 
+                # Run diarization on the audio
                 diarize_segments = diarize_model(audio)
+                
+                # Assign speakers to words/segments
                 result = whisperx.assign_word_speakers(diarize_segments, result)
                 logger.info(f"[{upload_id}] Speaker diarization complete on {current_device}")
                 
@@ -328,13 +332,108 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
                     if "speaker" in segment:
                         speaker_set.add(segment["speaker"])
                 
-                logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers")
+                logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers: {list(speaker_set)}")
                 
                 # Free up memory
                 del diarize_model
                 gc.collect()
                 if current_device == "cuda":
                     torch.cuda.empty_cache()
+                    
+            except AttributeError as attr_error:
+                if "DiarizationPipeline" in str(attr_error):
+                    logger.warning(f"[{upload_id}] Speaker diarization failed: WhisperX version doesn't support DiarizationPipeline")
+                    logger.info(f"[{upload_id}] Trying alternative diarization method...")
+                    
+                    try:
+                        # Alternative method for newer WhisperX versions
+                        import pyannote.audio
+                        from pyannote.audio import Pipeline
+                        
+                        # Load diarization pipeline directly from pyannote
+                        diarize_model = Pipeline.from_pretrained(
+                            "pyannote/speaker-diarization-3.1",
+                            use_auth_token=HF_TOKEN
+                        )
+                        diarize_model.to(torch.device(current_device))
+                        
+                        # Convert audio path to proper format for pyannote
+                        import tempfile
+                        import shutil
+                        
+                        # Create temporary wav file if needed
+                        temp_wav = None
+                        if not audio_path.endswith('.wav'):
+                            temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                            temp_wav.close()
+                            
+                            # Convert to wav using ffmpeg
+                            import subprocess
+                            subprocess.run([
+                                'ffmpeg', '-i', audio_path, '-ar', '16000', 
+                                '-ac', '1', '-y', temp_wav.name
+                            ], check=True, capture_output=True)
+                            diarize_audio_path = temp_wav.name
+                        else:
+                            diarize_audio_path = audio_path
+                        
+                        # Run diarization
+                        diarization_result = diarize_model(diarize_audio_path)
+                        
+                        # Convert pyannote output to WhisperX format
+                        diarize_segments = []
+                        for turn, _, speaker in diarization_result.itertracks(yield_label=True):
+                            diarize_segments.append({
+                                "start": turn.start,
+                                "end": turn.end,
+                                "speaker": speaker
+                            })
+                        
+                        # Assign speakers to WhisperX segments
+                        for segment in result["segments"]:
+                            segment_start = segment.get("start", 0)
+                            segment_end = segment.get("end", 0)
+                            
+                            # Find the speaker for this segment
+                            best_speaker = None
+                            max_overlap = 0
+                            
+                            for diarize_seg in diarize_segments:
+                                # Calculate overlap between segment and diarization
+                                overlap_start = max(segment_start, diarize_seg["start"])
+                                overlap_end = min(segment_end, diarize_seg["end"])
+                                overlap = max(0, overlap_end - overlap_start)
+                                
+                                if overlap > max_overlap:
+                                    max_overlap = overlap
+                                    best_speaker = diarize_seg["speaker"]
+                            
+                            if best_speaker:
+                                segment["speaker"] = best_speaker
+                        
+                        # Count unique speakers
+                        speaker_set = set()
+                        for segment in result["segments"]:
+                            if "speaker" in segment:
+                                speaker_set.add(segment["speaker"])
+                        
+                        logger.info(f"[{upload_id}] Identified {len(speaker_set)} unique speakers using pyannote: {list(speaker_set)}")
+                        
+                        # Clean up temporary file
+                        if temp_wav:
+                            os.unlink(temp_wav.name)
+                        
+                        # Free up memory
+                        del diarize_model
+                        gc.collect()
+                        if current_device == "cuda":
+                            torch.cuda.empty_cache()
+                            
+                    except Exception as pyannote_error:
+                        logger.warning(f"[{upload_id}] Alternative diarization also failed: {pyannote_error}")
+                        logger.info(f"[{upload_id}] Continuing without speaker diarization")
+                else:
+                    raise attr_error
                     
             except Exception as diarize_error:
                 logger.warning(f"[{upload_id}] Speaker diarization failed: {diarize_error}")
@@ -360,6 +459,9 @@ def transcribe_audio(audio_path: str, upload_id: str = None, diarize: bool = Tru
                 progress=100,
                 message=f"Transcription complete on {current_device}"
             )
+        
+        # Note: Multi-language subtitle generation will be handled by the processing pipeline
+        # after this function returns, since this is a sync function
         
         return result
     

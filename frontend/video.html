@@ -52,10 +52,25 @@
             
             <div class="video-controls">
                 <div class="language-selector">
-                    <select id="subtitle-language" class="language-select">
-                        <option value="en">English</option>
-                        <!-- Additional languages will be populated dynamically -->
-                    </select>
+                    <div class="language-dropdown">
+                        <button class="language-dropdown-btn" id="language-dropdown-btn">
+                            <span class="language-flag" id="current-language-flag">🇺🇸</span>
+                            <span class="language-name" id="current-language-name">English</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                        <div class="language-dropdown-menu" id="language-dropdown-menu">
+                            <!-- Languages will be populated dynamically -->
+                        </div>
+                    </div>
+                    
+                    <div class="language-actions">
+                        <button id="generate-all-languages" class="btn btn-secondary">
+                            <i class="fas fa-globe"></i> Generate All Languages
+                        </button>
+                        <button id="translate-current" class="btn btn-outline">
+                            <i class="fas fa-language"></i> Translate to Selected
+                        </button>
+                    </div>
                     
                     <label class="toggle-label">
                         <span>Subtitles</span>
@@ -134,11 +149,28 @@
             let currentSubtitleLanguage = 'en';
             let subtitleSegments = [];
             
+            // Enhanced language mapping with more languages
+            const LANGUAGE_DATA = {
+                'en': { name: 'English', flag: '🇺🇸' },
+                'ko': { name: 'Korean', flag: '🇰🇷' },
+                'zh': { name: 'Chinese', flag: '🇨🇳' },
+                'ja': { name: 'Japanese', flag: '🇯🇵' },
+                'es': { name: 'Spanish', flag: '🇪🇸' },
+                'fr': { name: 'French', flag: '🇫🇷' },
+                'de': { name: 'German', flag: '🇩🇪' },
+                'it': { name: 'Italian', flag: '🇮🇹' },
+                'pt': { name: 'Portuguese', flag: '🇧🇷' },
+                'ru': { name: 'Russian', flag: '🇷🇺' },
+                'ar': { name: 'Arabic', flag: '🇸🇦' },
+                'hi': { name: 'Hindi', flag: '🇮🇳' },
+                'th': { name: 'Thai', flag: '🇹🇭' },
+                'vi': { name: 'Vietnamese', flag: '🇻🇳' }
+            };
+
             // Elements
             const videoPlayer = document.getElementById('video-player');
             const videoSource = document.getElementById('video-source');
             const subtitleDisplay = document.getElementById('subtitle-display');
-            const subtitleLanguageSelect = document.getElementById('subtitle-language');
             const subtitleToggle = document.getElementById('subtitle-toggle');
             const processingOverlay = document.getElementById('processing-overlay');
             const processingStatus = document.getElementById('processing-status');
@@ -148,6 +180,121 @@
             const transcriptLoading = document.getElementById('transcript-loading');
             const copyLinkBtn = document.getElementById('copy-link');
             const downloadBtn = document.getElementById('download-btn');
+            const languageDropdownBtn = document.getElementById('language-dropdown-btn');
+            const languageDropdownMenu = document.getElementById('language-dropdown-menu');
+            const generateAllLanguagesBtn = document.getElementById('generate-all-languages');
+            const translateCurrentBtn = document.getElementById('translate-current');
+
+            // Language dropdown functionality
+            languageDropdownBtn.addEventListener('click', () => {
+                languageDropdownMenu.classList.toggle('show');
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!languageDropdownBtn.contains(e.target)) {
+                    languageDropdownMenu.classList.remove('show');
+                }
+            });
+
+            // Generate all languages functionality
+            generateAllLanguagesBtn.addEventListener('click', async () => {
+                generateAllLanguagesBtn.disabled = true;
+                generateAllLanguagesBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+                
+                try {
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/generate-subtitles`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to generate subtitles');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    // Update available languages
+                    videoData.available_languages = result.generated_languages;
+                    populateLanguageDropdown(result.generated_languages);
+                    
+                    // Show success message
+                    showNotification(`Generated subtitles in ${result.total_generated} languages!`, 'success');
+                    
+                } catch (error) {
+                    console.error('Error generating subtitles:', error);
+                    showNotification('Failed to generate subtitles. Please try again.', 'error');
+                } finally {
+                    generateAllLanguagesBtn.disabled = false;
+                    generateAllLanguagesBtn.innerHTML = '<i class="fas fa-globe"></i> Generate All Languages';
+                }
+            });
+
+            // Translate to current language
+            translateCurrentBtn.addEventListener('click', async () => {
+                if (currentSubtitleLanguage === 'en') {
+                    showNotification('Already viewing original language.', 'info');
+                    return;
+                }
+                
+                translateCurrentBtn.disabled = true;
+                translateCurrentBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Translating...';
+                
+                try {
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/generate-subtitles`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            languages: [currentSubtitleLanguage]
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to translate subtitles');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    // Reload the subtitles for current language
+                    delete subtitles[currentSubtitleLanguage]; // Clear cache
+                    await loadSubtitles(currentSubtitleLanguage);
+                    
+                    const langName = LANGUAGE_DATA[currentSubtitleLanguage]?.name || currentSubtitleLanguage;
+                    showNotification(`Translated to ${langName}!`, 'success');
+                    
+                } catch (error) {
+                    console.error('Error translating subtitles:', error);
+                    showNotification('Failed to translate subtitles. Please try again.', 'error');
+                } finally {
+                    translateCurrentBtn.disabled = false;
+                    translateCurrentBtn.innerHTML = '<i class="fas fa-language"></i> Translate to Selected';
+                }
+            });
+
+            // Show notification function
+            function showNotification(message, type = 'info') {
+                const notification = document.createElement('div');
+                notification.className = `notification notification-${type}`;
+                notification.innerHTML = `
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+                    <span>${message}</span>
+                `;
+                
+                document.body.appendChild(notification);
+                
+                // Animate in
+                setTimeout(() => notification.classList.add('show'), 10);
+                
+                // Remove after 3 seconds
+                setTimeout(() => {
+                    notification.classList.remove('show');
+                    setTimeout(() => document.body.removeChild(notification), 300);
+                }, 3000);
+            }
             
             // Load video data
             async function loadVideoData() {
@@ -195,28 +342,36 @@
             
             // Populate language dropdown
             function populateLanguageDropdown(languages) {
-                subtitleLanguageSelect.innerHTML = '';
+                const languageDropdownMenu = document.getElementById('language-dropdown-menu');
+                languageDropdownMenu.innerHTML = '';
                 
                 languages.forEach(lang => {
-                    const option = document.createElement('option');
-                    option.value = lang;
+                    const option = document.createElement('div');
+                    option.className = 'language-option';
+                    option.setAttribute('data-lang', lang);
                     
-                    // Map language codes to names
-                    const langNames = {
-                        'en': 'English',
-                        'es': 'Spanish',
-                        'fr': 'French',
-                        'de': 'German',
-                        'it': 'Italian',
-                        'pt': 'Portuguese',
-                        'ru': 'Russian',
-                        'zh': 'Chinese',
-                        'ja': 'Japanese'
-                    };
+                    option.innerHTML = `
+                        <span class="language-flag">${LANGUAGE_DATA[lang].flag}</span>
+                        <span class="language-name">${LANGUAGE_DATA[lang].name}</span>
+                    `;
                     
-                    option.textContent = langNames[lang] || lang;
-                    subtitleLanguageSelect.appendChild(option);
+                    option.addEventListener('click', () => {
+                        currentSubtitleLanguage = lang;
+                        loadSubtitles(currentSubtitleLanguage);
+                        updateCurrentLanguageDisplay();
+                    });
+                    
+                    languageDropdownMenu.appendChild(option);
                 });
+            }
+            
+            // Update displayed language in the dropdown
+            function updateCurrentLanguageDisplay() {
+                const currentLanguageFlag = document.getElementById('current-language-flag');
+                const currentLanguageName = document.getElementById('current-language-name');
+                
+                currentLanguageFlag.textContent = LANGUAGE_DATA[currentSubtitleLanguage]?.flag || '';
+                currentLanguageName.textContent = LANGUAGE_DATA[currentSubtitleLanguage]?.name || currentSubtitleLanguage;
             }
             
             // Load subtitles for selected language
@@ -344,11 +499,6 @@
             }
             
             // Event Listeners
-            subtitleLanguageSelect.addEventListener('change', (e) => {
-                currentSubtitleLanguage = e.target.value;
-                loadSubtitles(currentSubtitleLanguage);
-            });
-            
             subtitleToggle.addEventListener('change', () => {
                 subtitleDisplay.style.visibility = subtitleToggle.checked ? 'visible' : 'hidden';
             });

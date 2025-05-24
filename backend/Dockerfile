@@ -14,34 +14,21 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/*
 
 # Fix cuDNN library compatibility (cuDNN 8 to cuDNN 9 mapping)
-# This creates proper symbolic links for legacy cuDNN 8 library names
+# Create proper symbolic links with absolute paths
 RUN mkdir -p /usr/local/cuda/lib64 && \
-    # First, find the actual cuDNN 9 libraries
-    CUDNN_LIB_PATH="/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib" && \
-    # Create specific symbolic links for the libraries that are commonly needed
-    if [ -f "$CUDNN_LIB_PATH/libcudnn.so.9" ]; then \
-        ln -sf "$CUDNN_LIB_PATH/libcudnn.so.9" /usr/local/cuda/lib64/libcudnn.so.8; \
-    fi && \
-    if [ -f "$CUDNN_LIB_PATH/libcudnn_ops_infer.so.9" ]; then \
-        ln -sf "$CUDNN_LIB_PATH/libcudnn_ops_infer.so.9" /usr/local/cuda/lib64/libcudnn_ops_infer.so.8; \
-    fi && \
-    if [ -f "$CUDNN_LIB_PATH/libcudnn_ops_train.so.9" ]; then \
-        ln -sf "$CUDNN_LIB_PATH/libcudnn_ops_train.so.9" /usr/local/cuda/lib64/libcudnn_ops_train.so.8; \
-    fi && \
-    if [ -f "$CUDNN_LIB_PATH/libcudnn_adv_infer.so.9" ]; then \
-        ln -sf "$CUDNN_LIB_PATH/libcudnn_adv_infer.so.9" /usr/local/cuda/lib64/libcudnn_adv_infer.so.8; \
-    fi && \
-    if [ -f "$CUDNN_LIB_PATH/libcudnn_adv_train.so.9" ]; then \
-        ln -sf "$CUDNN_LIB_PATH/libcudnn_adv_train.so.9" /usr/local/cuda/lib64/libcudnn_adv_train.so.8; \
-    fi && \
-    if [ -f "$CUDNN_LIB_PATH/libcudnn_cnn_infer.so.9" ]; then \
-        ln -sf "$CUDNN_LIB_PATH/libcudnn_cnn_infer.so.9" /usr/local/cuda/lib64/libcudnn_cnn_infer.so.8; \
-    fi && \
-    if [ -f "$CUDNN_LIB_PATH/libcudnn_cnn_train.so.9" ]; then \
-        ln -sf "$CUDNN_LIB_PATH/libcudnn_cnn_train.so.9" /usr/local/cuda/lib64/libcudnn_cnn_train.so.8; \
-    fi && \
-    # Verify the links were created
-    ls -la /usr/local/cuda/lib64/libcudnn*
+    # Create symbolic links using absolute paths (not variables)
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9 /usr/local/cuda/lib64/libcudnn_ops_infer.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9 /usr/local/cuda/lib64/libcudnn_ops_train.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_adv.so.9 /usr/local/cuda/lib64/libcudnn_adv_infer.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_adv.so.9 /usr/local/cuda/lib64/libcudnn_adv_train.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_cnn.so.9 /usr/local/cuda/lib64/libcudnn_cnn_infer.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_cnn.so.9 /usr/local/cuda/lib64/libcudnn_cnn_train.so.8 && \
+    # Verify the links were created correctly
+    echo "Checking cuDNN symbolic links:" && \
+    ls -la /usr/local/cuda/lib64/libcudnn* && \
+    echo "Verifying target files exist:" && \
+    ls -la /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9
 
 WORKDIR /app
 
@@ -53,6 +40,7 @@ ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_OFFLINE=0
 # Updated library paths - ensure both cuDNN 9 and compatibility links are found
 ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/cuda/lib64:/opt/conda/lib:$LD_LIBRARY_PATH
+
 
 # Copy requirements file
 COPY requirements.txt .
@@ -75,9 +63,6 @@ COPY ./logging.conf ./
 RUN mkdir -p uploads cache .cache/huggingface/hub && \
     chmod -R 777 uploads cache .cache
 
-# Improved healthcheck that handles model loading gracefully
-HEALTHCHECK --interval=30s --timeout=30s --start-period=180s --retries=5 \
-    CMD curl -f --connect-timeout 5 --max-time 10 http://localhost:8000/health || exit 1
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]
