@@ -63,15 +63,6 @@
                         </div>
                     </div>
                     
-                    <div class="language-actions">
-                        <button id="generate-all-languages" class="btn btn-secondary">
-                            <i class="fas fa-globe"></i> Generate All Languages
-                        </button>
-                        <button id="translate-current" class="btn btn-outline">
-                            <i class="fas fa-language"></i> Translate to Selected
-                        </button>
-                    </div>
-                    
                     <label class="toggle-label">
                         <span>Subtitles</span>
                         <span class="toggle-switch">
@@ -82,6 +73,9 @@
                 </div>
                 
                 <div class="action-buttons">
+                    <button id="translate-btn" class="btn btn-outline" style="display: none;">
+                        <i class="fas fa-language"></i> Translate
+                    </button>
                     <button id="copy-link" class="btn btn-outline">
                         <i class="fas fa-copy"></i> Copy Link
                     </button>
@@ -106,10 +100,17 @@
         <div class="content-box transcript-box">
             <div class="content-header">
                 <h2 class="content-title">Transcript</h2>
+                <div class="transcript-actions">
+                    <button id="download-transcript-btn" class="btn btn-outline btn-small">
+                        <i class="fas fa-download"></i> Download Transcript
+                    </button>
+                </div>
             </div>
-            <div class="content-text" id="transcript-content">
-                <div class="loading-transcript" id="transcript-loading">
-                    <i class="fas fa-spinner fa-spin"></i> Loading transcript...
+            <div class="transcript-container">
+                <div class="transcript-content" id="transcript-content">
+                    <div class="loading-transcript" id="transcript-loading">
+                        <i class="fas fa-spinner fa-spin"></i> Loading transcript...
+                    </div>
                 </div>
             </div>
         </div>
@@ -149,22 +150,11 @@
             let currentSubtitleLanguage = 'en';
             let subtitleSegments = [];
             
-            // Enhanced language mapping with more languages
+            // Enhanced language mapping with flags for Chinese and Korean
             const LANGUAGE_DATA = {
                 'en': { name: 'English', flag: '🇺🇸' },
-                'ko': { name: 'Korean', flag: '🇰🇷' },
                 'zh': { name: 'Chinese', flag: '🇨🇳' },
-                'ja': { name: 'Japanese', flag: '🇯🇵' },
-                'es': { name: 'Spanish', flag: '🇪🇸' },
-                'fr': { name: 'French', flag: '🇫🇷' },
-                'de': { name: 'German', flag: '🇩🇪' },
-                'it': { name: 'Italian', flag: '🇮🇹' },
-                'pt': { name: 'Portuguese', flag: '🇧🇷' },
-                'ru': { name: 'Russian', flag: '🇷🇺' },
-                'ar': { name: 'Arabic', flag: '🇸🇦' },
-                'hi': { name: 'Hindi', flag: '🇮🇳' },
-                'th': { name: 'Thai', flag: '🇹🇭' },
-                'vi': { name: 'Vietnamese', flag: '🇻🇳' }
+                'ko': { name: 'Korean', flag: '🇰🇷' }
             };
 
             // Elements
@@ -182,8 +172,6 @@
             const downloadBtn = document.getElementById('download-btn');
             const languageDropdownBtn = document.getElementById('language-dropdown-btn');
             const languageDropdownMenu = document.getElementById('language-dropdown-menu');
-            const generateAllLanguagesBtn = document.getElementById('generate-all-languages');
-            const translateCurrentBtn = document.getElementById('translate-current');
 
             // Language dropdown functionality
             languageDropdownBtn.addEventListener('click', () => {
@@ -194,84 +182,6 @@
             document.addEventListener('click', (e) => {
                 if (!languageDropdownBtn.contains(e.target)) {
                     languageDropdownMenu.classList.remove('show');
-                }
-            });
-
-            // Generate all languages functionality
-            generateAllLanguagesBtn.addEventListener('click', async () => {
-                generateAllLanguagesBtn.disabled = true;
-                generateAllLanguagesBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
-                
-                try {
-                    const response = await fetchWithAuth(`/api/videos/${videoId}/generate-subtitles`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        }
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error('Failed to generate subtitles');
-                    }
-                    
-                    const result = await response.json();
-                    
-                    // Update available languages
-                    videoData.available_languages = result.generated_languages;
-                    populateLanguageDropdown(result.generated_languages);
-                    
-                    // Show success message
-                    showNotification(`Generated subtitles in ${result.total_generated} languages!`, 'success');
-                    
-                } catch (error) {
-                    console.error('Error generating subtitles:', error);
-                    showNotification('Failed to generate subtitles. Please try again.', 'error');
-                } finally {
-                    generateAllLanguagesBtn.disabled = false;
-                    generateAllLanguagesBtn.innerHTML = '<i class="fas fa-globe"></i> Generate All Languages';
-                }
-            });
-
-            // Translate to current language
-            translateCurrentBtn.addEventListener('click', async () => {
-                if (currentSubtitleLanguage === 'en') {
-                    showNotification('Already viewing original language.', 'info');
-                    return;
-                }
-                
-                translateCurrentBtn.disabled = true;
-                translateCurrentBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Translating...';
-                
-                try {
-                    const response = await fetchWithAuth(`/api/videos/${videoId}/generate-subtitles`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            languages: [currentSubtitleLanguage]
-                        })
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error('Failed to translate subtitles');
-                    }
-                    
-                    const result = await response.json();
-                    
-                    // Reload the subtitles for current language
-                    delete subtitles[currentSubtitleLanguage]; // Clear cache
-                    await loadSubtitles(currentSubtitleLanguage);
-                    
-                    const langName = LANGUAGE_DATA[currentSubtitleLanguage]?.name || currentSubtitleLanguage;
-                    showNotification(`Translated to ${langName}!`, 'success');
-                    
-                } catch (error) {
-                    console.error('Error translating subtitles:', error);
-                    showNotification('Failed to translate subtitles. Please try again.', 'error');
-                } finally {
-                    translateCurrentBtn.disabled = false;
-                    translateCurrentBtn.innerHTML = '<i class="fas fa-language"></i> Translate to Selected';
                 }
             });
 
@@ -310,14 +220,35 @@
                     // Update video player
                     document.title = `${videoData.title} - ClipSummary`;
                     
+                    // Handle different video types
                     if (videoData.video_url) {
+                        // Regular uploaded video
                         videoSource.src = videoData.video_url;
                         videoPlayer.load();
                         processingOverlay.style.display = 'none';
-                    } else if (videoData.url) {
-                        // For YouTube videos
-                        // You would need to implement a YouTube player here
-                        // or display a message that direct playback isn't available
+                    } else if (videoData.url && videoData.url.includes('youtube')) {
+                        // YouTube video - show processing overlay until complete
+                        if (videoData.status === 'completed') {
+                            // YouTube processing is done, but we can't show the video directly
+                            // Instead, show thumbnail and indicate it's a YouTube video
+                            processingOverlay.innerHTML = `
+                                <div class="youtube-placeholder">
+                                    <img src="${videoData.thumbnail || '/images/default-thumbnail.jpg'}" alt="Video thumbnail" style="max-width: 300px; border-radius: 8px;">
+                                    <h3 style="margin: 16px 0; color: white;">${videoData.title}</h3>
+                                    <p style="color: #888;">YouTube video processed successfully</p>
+                                    <a href="${videoData.url}" target="_blank" class="btn btn-primary" style="margin-top: 16px;">
+                                        <i class="fas fa-external-link-alt"></i> Watch on YouTube
+                                    </a>
+                                </div>
+                            `;
+                            processingOverlay.style.display = 'flex';
+                        } else {
+                            // Still processing
+                            checkProcessingStatus();
+                        }
+                    } else {
+                        // Unknown video type or still processing
+                        checkProcessingStatus();
                     }
                     
                     // Load available languages
@@ -330,13 +261,28 @@
                     if (videoData.summary) {
                         summaryProcessing.style.display = 'none';
                         summaryContent.innerHTML = `<p>${videoData.summary}</p>`;
+                        
+                        // Show translate button for English videos
+                        if (currentSubtitleLanguage === 'en') {
+                            document.getElementById('translate-btn').style.display = 'inline-block';
+                        }
                     } else {
                         checkProcessingStatus();
                     }
                     
                 } catch (error) {
                     console.error('Error loading video:', error);
-                    alert('Failed to load video. Please try again later.');
+                    processingOverlay.innerHTML = `
+                        <div class="error-message">
+                            <i class="fas fa-exclamation-triangle" style="font-size: 48px; color: #ef4444; margin-bottom: 16px;"></i>
+                            <h3 style="color: white; margin-bottom: 8px;">Failed to load video</h3>
+                            <p style="color: #888;">Please try refreshing the page or contact support if the problem persists.</p>
+                            <button onclick="window.location.reload()" class="btn btn-primary" style="margin-top: 16px;">
+                                <i class="fas fa-refresh"></i> Retry
+                            </button>
+                        </div>
+                    `;
+                    processingOverlay.style.display = 'flex';
                 }
             }
             
@@ -523,6 +469,138 @@
                     alert('Video is not available for download');
                 }
             });
+            
+            // Download transcript button
+            document.getElementById('download-transcript-btn').addEventListener('click', () => {
+                if (!subtitleSegments || subtitleSegments.length === 0) {
+                    showNotification('No transcript available for download', 'error');
+                    return;
+                }
+                
+                // Generate transcript content
+                let transcriptText = `Transcript - ${videoData.title}\n`;
+                transcriptText += `Language: ${LANGUAGE_DATA[currentSubtitleLanguage]?.name || currentSubtitleLanguage}\n`;
+                transcriptText += `Generated: ${new Date().toLocaleDateString()}\n\n`;
+                
+                subtitleSegments.forEach(segment => {
+                    const startTime = formatTime(segment.start);
+                    const endTime = formatTime(segment.end);
+                    transcriptText += `[${startTime} - ${endTime}] ${segment.text}\n`;
+                });
+                
+                // Create and download file
+                const blob = new Blob([transcriptText], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `transcript_${videoData.title || videoId}_${currentSubtitleLanguage}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showNotification('Transcript downloaded successfully!', 'success');
+            });
+            
+            // Translation functionality
+            document.getElementById('translate-btn').addEventListener('click', () => {
+                showTranslateModal();
+            });
+            
+            // Show translation modal
+            function showTranslateModal() {
+                const modal = document.createElement('div');
+                modal.className = 'translate-modal-overlay';
+                modal.innerHTML = `
+                    <div class="translate-modal">
+                        <div class="modal-header">
+                            <h3>Translate Content</h3>
+                            <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <p>Select language to translate summary and subtitles:</p>
+                            <div class="language-selection">
+                                <button class="language-btn" data-lang="zh">
+                                    <span class="language-flag">🇨🇳</span>
+                                    <span class="language-name">Chinese</span>
+                                </button>
+                                <button class="language-btn" data-lang="ko">
+                                    <span class="language-flag">🇰🇷</span>
+                                    <span class="language-name">Korean</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                document.body.appendChild(modal);
+                
+                // Add event listeners to language buttons
+                modal.querySelectorAll('.language-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const targetLang = btn.dataset.lang;
+                        await translateVideo(targetLang);
+                        modal.remove();
+                    });
+                });
+            }
+            
+            // Translate video content
+            async function translateVideo(targetLanguage) {
+                try {
+                    showNotification('Starting translation...', 'info');
+                    
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/translate?target_language=${targetLanguage}`, {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Translation failed');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.status === 'already_exists') {
+                        showNotification(`Translation to ${result.language_name || targetLanguage} already exists`, 'info');
+                    } else {
+                        showNotification(`Successfully translated to ${result.language_name || targetLanguage}!`, 'success');
+                        
+                        // Reload video data to update available languages
+                        await loadVideoData();
+                    }
+                    
+                } catch (error) {
+                    console.error('Translation error:', error);
+                    showNotification(`Translation failed: ${error.message}`, 'error');
+                }
+            }
+            
+            // Load summary for specific language
+            async function loadSummary(language) {
+                try {
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/summary/${language}`);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        summaryProcessing.style.display = 'none';
+                        summaryContent.innerHTML = `<p>${data.summary}</p>`;
+                    } else {
+                        // If translation doesn't exist, show original summary
+                        if (videoData.summary) {
+                            summaryContent.innerHTML = `<p>${videoData.summary}</p>`;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading summary:', error);
+                    // Fall back to original summary
+                    if (videoData.summary) {
+                        summaryContent.innerHTML = `<p>${videoData.summary}</p>`;
+                    }
+                }
+            }
             
             // Start loading
             loadVideoData();

@@ -580,3 +580,169 @@ async def get_subtitle_statistics(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving subtitle statistics: {str(e)}"
         )
+
+@router.post("/{video_id}/translate")
+async def translate_video_content(
+    video_id: str,
+    target_language: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Translate both summary and subtitles to target language (Chinese or Korean)"""
+    try:
+        from ai.translator import translate_summary, translate_subtitle_segments, get_supported_languages
+        
+        # Validate target language
+        supported_langs = get_supported_languages()
+        if target_language not in supported_langs:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported language: {target_language}. Supported: {list(supported_langs.keys())}"
+            )
+        
+        # Only allow Chinese and Korean for now
+        if target_language not in ['zh', 'ko']:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Currently only Chinese (zh) and Korean (ko) translation are supported"
+            )
+        
+        result_path = f"uploads/{video_id}/result.json"
+        if not os.path.exists(result_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Video not found"
+            )
+        
+        # Load video data
+        with open(result_path, "r") as f:
+            result_data = json.load(f)
+        
+        # Check if translation already exists
+        if "translations" in result_data and target_language in result_data["translations"]:
+            return {
+                "video_id": video_id,
+                "target_language": target_language,
+                "status": "already_exists",
+                "message": f"Translation to {supported_langs[target_language]} already exists"
+            }
+        
+        # Initialize translations structure
+        if "translations" not in result_data:
+            result_data["translations"] = {}
+        if target_language not in result_data["translations"]:
+            result_data["translations"][target_language] = {}
+        
+        # Translate summary
+        en_summary = result_data.get("summary", {}).get("en")
+        if en_summary:
+            translated_summary = translate_summary(en_summary, target_language, video_id)
+            result_data["translations"][target_language]["summary"] = translated_summary
+        
+        # Translate subtitles
+        if "transcript" in result_data and "segments" in result_data["transcript"]:
+            en_segments = result_data["transcript"]["segments"]
+            translated_segments = translate_subtitle_segments(en_segments, target_language, video_id)
+            result_data["translations"][target_language]["transcript"] = translated_segments
+        
+        # Save updated result
+        with open(result_path, "w") as f:
+            json.dump(result_data, f, ensure_ascii=False, indent=2)
+        
+        # Also save individual subtitle file
+        subtitle_path = f"uploads/{video_id}/subtitles/{target_language}.json"
+        os.makedirs(os.path.dirname(subtitle_path), exist_ok=True)
+        
+        if target_language in result_data["translations"] and "transcript" in result_data["translations"][target_language]:
+            subtitle_data = {
+                "segments": result_data["translations"][target_language]["transcript"],
+                "language": target_language
+            }
+            with open(subtitle_path, "w") as f:
+                json.dump(subtitle_data, f, ensure_ascii=False, indent=2)
+        
+        return {
+            "video_id": video_id,
+            "target_language": target_language,
+            "language_name": supported_langs[target_language],
+            "status": "completed",
+            "summary_translated": bool(en_summary),
+            "subtitles_translated": "transcript" in result_data,
+            "message": f"Successfully translated to {supported_langs[target_language]}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Translation failed: {str(e)}"
+        )
+
+@router.get("/{video_id}/translations")
+async def get_available_translations(
+    video_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get list of available translations for a video"""
+    try:
+        from ai.translator import get_supported_languages
+        
+        result_path = f"uploads/{video_id}/result.json"
+        if not os.path.exists(result_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Video not found"
+            )
+        
+        with open(result_path, "r") as f:
+            result_data = json.load(f)
+        
+        supported_langs = get_supported_languages()
+        available_translations = []
+        
+        # Always include English as original
+        available_translations.append({
+            "code": "en",
+            "name": "English",
+            "flag": "🇺🇸",
+            "is_original": True
+        })
+        
+        # Add available translations
+        if "translations" in result_data:
+            for lang_code in result_data["translations"].keys():
+                if lang_code in supported_langs:
+                    flag_map = {
+                        'zh': '🇨🇳',
+                        'ko': '🇰🇷',
+                        'es': '🇪🇸',
+                        'fr': '🇫🇷',
+                        'de': '🇩🇪',
+                        'ja': '🇯🇵',
+                        'ru': '🇷🇺',
+                        'ar': '🇸🇦',
+                        'hi': '🇮🇳'
+                    }
+                    available_translations.append({
+                        "code": lang_code,
+                        "name": supported_langs[lang_code],
+                        "flag": flag_map.get(lang_code, "🌐"),
+                        "is_original": False
+                    })
+        
+        return {
+            "video_id": video_id,
+            "available_translations": available_translations,
+            "supported_for_new_translation": [
+                {"code": "zh", "name": "Chinese", "flag": "🇨🇳"},
+                {"code": "ko", "name": "Korean", "flag": "🇰🇷"}
+            ]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting translations: {str(e)}"
+        )

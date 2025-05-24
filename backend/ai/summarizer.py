@@ -60,8 +60,29 @@ def generate_summary(text: str, max_sentences: int = 3, upload_id: str = None) -
     """Generate summary with detailed logging and progress updates."""
     try:
         start_time = time.time()
-        text_length = len(text)
-        logger.info(f"[{upload_id}] Starting summary generation for text of length {text_length}")
+        
+        # Clean and validate input text
+        if not text or not text.strip():
+            logger.warning(f"[{upload_id}] Empty or invalid input text provided")
+            return "No transcript available for summarization."
+        
+        # Clean the text - remove excessive punctuation and whitespace
+        cleaned_text = text.strip()
+        
+        # Remove excessive punctuation patterns that might confuse the model
+        import re
+        cleaned_text = re.sub(r'[^\w\s.,!?;:\'"()-]', ' ', cleaned_text)  # Remove unusual characters
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)  # Normalize whitespace
+        cleaned_text = re.sub(r'[.,!?;:]{3,}', '.', cleaned_text)  # Remove excessive punctuation
+        
+        # Check if text is mostly punctuation (garbage input)
+        words = re.findall(r'\b\w+\b', cleaned_text)
+        if len(words) < 10:
+            logger.warning(f"[{upload_id}] Text appears to be mostly punctuation or too short")
+            return "The transcript appears to be incomplete or corrupted."
+        
+        text_length = len(cleaned_text)
+        logger.info(f"[{upload_id}] Starting summary generation for cleaned text of length {text_length}")
         
         if upload_id:
             update_processing_status(
@@ -83,38 +104,72 @@ def generate_summary(text: str, max_sentences: int = 3, upload_id: str = None) -
                 message="Generating summary..."
             )
         
-        # Tokenize and generate summary
+        # Tokenize with proper truncation for long texts
         tokenize_start = time.time()
-        inputs = tokenizer(text, return_tensors="pt", max_length=1024, truncation=True)
+        
+        # For very long texts, truncate smartly by taking first and last parts
+        if len(cleaned_text) > 3000:
+            # Take first 2000 chars and last 1000 chars
+            truncated_text = cleaned_text[:2000] + " ... " + cleaned_text[-1000:]
+            logger.info(f"[{upload_id}] Text truncated for summarization: {len(truncated_text)} chars")
+        else:
+            truncated_text = cleaned_text
+        
+        inputs = tokenizer(
+            truncated_text, 
+            return_tensors="pt", 
+            max_length=1024, 
+            truncation=True,
+            padding=True
+        )
         input_ids = inputs["input_ids"].to(next(model.parameters()).device)
+        attention_mask = inputs["attention_mask"].to(next(model.parameters()).device)
+        
         tokenize_time = time.time() - tokenize_start
         logger.info(f"[{upload_id}] Text tokenized in {tokenize_time:.2f} seconds")
         
-        # Generate summary
+        # Generate summary with better parameters
         generate_start = time.time()
-        summary_ids = model.generate(
-            input_ids,
-            max_length=150,
-            min_length=40,
-            num_beams=4,
-            length_penalty=2.0,
-            early_stopping=True
-        )
+        with torch.no_grad():
+            summary_ids = model.generate(
+                input_ids,
+                attention_mask=attention_mask,
+                max_length=min(150, max_sentences * 30),  # Adjust based on requested sentences
+                min_length=max(30, max_sentences * 8),    # Ensure minimum content
+                num_beams=4,
+                length_penalty=2.0,
+                early_stopping=True,
+                no_repeat_ngram_size=3,  # Avoid repetition
+                do_sample=False  # Use deterministic generation
+            )
+        
         summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
         generate_time = time.time() - generate_start
+        
+        # Post-process summary
+        summary = summary.strip()
+        
+        # If summary is too short or seems corrupted, provide fallback
+        if len(summary) < 20 or len(re.findall(r'\b\w+\b', summary)) < 5:
+            logger.warning(f"[{upload_id}] Generated summary appears corrupted, using fallback")
+            summary = f"This video contains a {len(words)}-word transcript discussing various topics."
+        
+        # Ensure summary ends with proper punctuation
+        if summary and not summary[-1] in '.!?':
+            summary += '.'
         
         # Log completion
         total_time = time.time() - start_time
         summary_length = len(summary)
-        sentences = summary.split('.')
-        num_sentences = len([s for s in sentences if s.strip()])
+        sentences = [s.strip() for s in summary.split('.') if s.strip()]
+        num_sentences = len(sentences)
         
         logger.info(f"[{upload_id}] Summary generation completed:")
         logger.info(f"[{upload_id}] - Time taken: {total_time:.2f} seconds")
         logger.info(f"[{upload_id}] - Input length: {text_length} chars")
         logger.info(f"[{upload_id}] - Summary length: {summary_length} chars")
         logger.info(f"[{upload_id}] - Number of sentences: {num_sentences}")
-        logger.info(f"[{upload_id}] - Compression ratio: {summary_length/text_length:.2%}")
+        logger.info(f"[{upload_id}] - Summary preview: {summary[:100]}...")
         
         if upload_id:
             update_processing_status(
@@ -136,4 +191,6 @@ def generate_summary(text: str, max_sentences: int = 3, upload_id: str = None) -
                 progress=0,
                 message=error_msg
             )
-        raise Exception(error_msg)
+        
+        # Return a fallback summary instead of raising exception
+        return "Summary generation failed. Please try processing the video again."

@@ -169,3 +169,74 @@ def batch_translate(texts: List[str], target_lang: str, upload_id: str = None) -
                 message=error_msg
             )
         raise Exception(error_msg)
+
+def translate_summary(summary_text: str, target_lang: str, upload_id: str = None) -> str:
+    """Translate summary text to target language."""
+    try:
+        logger.info(f"[{upload_id}] Translating summary to {target_lang}")
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=60,
+                message=f"Translating summary to {target_lang}..."
+            )
+        
+        translated_summary = translate_text(summary_text, target_lang, upload_id)
+        
+        logger.info(f"[{upload_id}] Summary translation completed")
+        return translated_summary
+        
+    except Exception as e:
+        error_msg = f"Summary translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        return summary_text  # Return original if translation fails
+
+def translate_subtitle_segments(segments: List[dict], target_lang: str, upload_id: str = None) -> List[dict]:
+    """Translate subtitle segments to target language."""
+    try:
+        logger.info(f"[{upload_id}] Translating {len(segments)} subtitle segments to {target_lang}")
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=70,
+                message=f"Translating subtitles to {target_lang}..."
+            )
+        
+        # Extract texts for batch translation
+        texts = [segment.get('text', '') for segment in segments]
+        
+        # Batch translate
+        translated_texts = batch_translate(texts, target_lang, upload_id)
+        
+        # Create new segments with translated text
+        translated_segments = []
+        for i, segment in enumerate(segments):
+            translated_segment = segment.copy()
+            translated_segment['text'] = translated_texts[i]
+            translated_segments.append(translated_segment)
+        
+        logger.info(f"[{upload_id}] Subtitle translation completed")
+        return translated_segments
+        
+    except Exception as e:
+        error_msg = f"Subtitle translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        return segments  # Return original if translation fails
+
+def get_supported_languages() -> Dict[str, str]:
+    """Get list of supported translation languages."""
+    return {
+        'zh': 'Chinese',
+        'ko': 'Korean',
+        'es': 'Spanish',
+        'fr': 'French',
+        'de': 'German',
+        'ja': 'Japanese',
+        'ru': 'Russian',
+        'ar': 'Arabic',
+        'hi': 'Hindi'
+    }
