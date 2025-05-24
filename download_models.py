@@ -5,7 +5,7 @@ Model Downloader for ClipSummary
 This script downloads all the necessary models for the ClipSummary application:
 - WhisperX (Systran--faster-whisper-large-v2)
 - Summarizers (facebook--bart-large-cnn)
-- Translation models (NLLB for Chinese and Korean)
+- Translation models (M2M100 for Chinese and Korean)
 
 Models are saved to a "models" directory in the project root, which can be mounted
 in the Docker container.
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 MODELS = [
     "Systran/faster-whisper-large-v2",   # WhisperX ASR model
     "facebook/bart-large-cnn",           # Summarization model
-    "facebook/nllb-200-distilled-600M",  # NLLB translation model for Chinese and Korean
+    "facebook/m2m100_418M",              # M2M100 translation model for Chinese and Korean
 ]
 
 def download_model(model_id, output_dir):

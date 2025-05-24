@@ -1,0 +1,29 @@
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+
+# Load the M2M100 model and tokenizer
+model_name = "facebook/m2m100_418M"
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+# The English text you want to translate
+english_text = "Generative AI is a very exciting field."
+
+# --- Translate to Korean ---
+# Set the source and target languages for Korean
+tokenizer.src_lang = "en"
+encoded_korean = tokenizer(english_text, return_tensors="pt")
+generated_tokens_korean = model.generate(**encoded_korean, forced_bos_token_id=tokenizer.get_lang_id("ko"))
+korean_translation = tokenizer.batch_decode(generated_tokens_korean, skip_special_tokens=True)
+
+print(f"English: {english_text}")
+print(f"Korean Translation: {korean_translation[0]}")
+
+# --- Translate to Chinese ---
+# Set the source and target languages for Chinese
+tokenizer.src_lang = "en"
+encoded_chinese = tokenizer(english_text, return_tensors="pt")
+generated_tokens_chinese = model.generate(**encoded_chinese, forced_bos_token_id=tokenizer.get_lang_id("zh"))
+chinese_translation = tokenizer.batch_decode(generated_tokens_chinese, skip_special_tokens=True)
+
+print(f"\nEnglish: {english_text}")
+print(f"Chinese Translation: {chinese_translation[0]}")
