@@ -9,18 +9,16 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     libsndfile1 \
-    --no-install-recommends \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create symbolic links for cuDNN compatibility (cuDNN 8 to cuDNN 9)
-RUN ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so.8 && \
-    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops_infer.so.9 /usr/local/cuda/lib64/libcudnn_ops_infer.so.8 && \
-    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops_train.so.9 /usr/local/cuda/lib64/libcudnn_ops_train.so.8 && \
-    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_adv_infer.so.9 /usr/local/cuda/lib64/libcudnn_adv_infer.so.8 && \
-    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_adv_train.so.9 /usr/local/cuda/lib64/libcudnn_adv_train.so.8 && \
-    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_cnn_infer.so.9 /usr/local/cuda/lib64/libcudnn_cnn_infer.so.8 && \
-    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_cnn_train.so.9 /usr/local/cuda/lib64/libcudnn_cnn_train.so.8
+# This fixes the "libcudnn_ops_infer.so.8" error
+RUN find /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib -name "*.so.9" | while read lib; do \
+        base=$(basename "$lib" .so.9); \
+        ln -sf "$lib" "/usr/local/cuda/lib64/${base}.so.8"; \
+    done
 
 WORKDIR /app
 
@@ -53,6 +51,10 @@ COPY ./logging.conf ./
 # Create necessary directories
 RUN mkdir -p uploads cache .cache/huggingface/hub && \
     chmod -R 777 uploads cache .cache
+
+# Improved healthcheck that handles model loading gracefully
+HEALTHCHECK --interval=30s --timeout=30s --start-period=180s --retries=5 \
+    CMD curl -f --connect-timeout 5 --max-time 10 http://localhost:8000/health || exit 1
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]
