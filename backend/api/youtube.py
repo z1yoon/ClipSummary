@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, HTTPException, status, BackgroundTasks, Depends
 from pydantic import BaseModel, HttpUrl
 import os
 import json
@@ -17,6 +17,7 @@ from ai.whisperx import transcribe_audio
 from ai.summarizer import generate_summary
 from ai.translator import translate_text
 from utils.cache import get_cached_result, cache_result
+from api.auth import get_current_user
 
 # Setup router
 router = APIRouter()
@@ -159,7 +160,11 @@ def get_youtube_video_info(url: str) -> Dict[str, Any]:
         }
 
 @router.post("/process")
-async def process_youtube_video(request: YouTubeRequest, background_tasks: BackgroundTasks):
+async def process_youtube_video(
+    request: YouTubeRequest, 
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user)
+):
     """Process a YouTube video to generate a transcript, summary, and translations."""
     try:
         # Extract video ID and generate a cache key
@@ -177,7 +182,7 @@ async def process_youtube_video(request: YouTubeRequest, background_tasks: Backg
         # Create directory for this video
         os.makedirs(f"uploads/{video_id}", exist_ok=True)
         
-        # Save basic video info
+        # Save basic video info with user information
         with open(f"uploads/{video_id}/info.json", 'w') as f:
             json.dump({
                 "video_id": video_id,
@@ -187,7 +192,10 @@ async def process_youtube_video(request: YouTubeRequest, background_tasks: Backg
                 "duration": video_info.get('duration'),
                 "languages_requested": request.languages,
                 "summary_length": request.summary_length,
-                "upload_time": time.time()
+                "upload_time": time.time(),
+                "user_id": current_user.get('id'),
+                "user_name": current_user.get('username'),
+                "is_youtube": True
             }, f)
         
         # Download audio in background

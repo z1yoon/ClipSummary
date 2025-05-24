@@ -416,6 +416,46 @@ async def upload_video(
             detail=f"An error occurred during upload: {str(e)}"
         )
 
+@router.post("/status/update")
+async def update_upload_status(
+    request: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update the processing status of an upload."""
+    try:
+        upload_id = request.get("upload_id")
+        status = request.get("status", "processing")
+        progress = request.get("progress", 0)
+        message = request.get("message", "")
+        
+        if not upload_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="upload_id is required"
+            )
+        
+        # Update the processing status
+        update_processing_status(
+            upload_id=upload_id,
+            status=status,
+            progress=progress,
+            message=message
+        )
+        
+        return {
+            "success": True,
+            "upload_id": upload_id,
+            "status": status,
+            "progress": progress,
+            "message": message
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update status: {str(e)}"
+        )
+
 @router.get("/status/{upload_id}")
 async def get_upload_status(upload_id: str):
     """Check the status of uploaded video processing."""

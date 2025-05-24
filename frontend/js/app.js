@@ -192,9 +192,25 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (response.upload_id) {
                         showProcessingStatus({
                             status: 'processing',
-                            progress: 10, 
+                            progress: 15, 
                             message: 'Upload complete. Starting video processing...'
                         });
+                        
+                        // Update backend status to mark upload as complete
+                        fetch('/api/upload/status/update', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                            },
+                            body: JSON.stringify({
+                                upload_id: response.upload_id,
+                                status: 'processing',
+                                progress: 15,
+                                message: 'Upload complete. Starting video processing...'
+                            })
+                        }).catch(err => console.warn('Failed to update upload status:', err));
+                        
                         trackProcessing(response.upload_id);
                     } else {
                         showError('Upload failed: No upload ID in response');
