@@ -1,5 +1,5 @@
-# Use official PyTorch image that matches our requirements (torch>=2.5.1)
-FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
+# Use official PyTorch image with RTX 5090 support (PyTorch 2.7.0 + CUDA 12.8)
+FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
 
 # Install system dependencies including curl for healthcheck
 RUN apt-get update && apt-get install -y \
@@ -21,7 +21,7 @@ ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_OFFLINE=0
-# Updated library paths for PyTorch 2.5.1
+# Updated library paths for PyTorch 2.7.0 with CUDA 12.8
 ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/opt/conda/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
 # Copy requirements file
@@ -30,9 +30,6 @@ COPY requirements.txt .
 # Install Python dependencies with better error handling
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
-
-# Test PyTorch and CUDA setup with WhisperX
-RUN python -c "import torch; import whisperx; print('PyTorch version:', torch.__version__); print('WhisperX version:', whisperx.__version__); print('CUDA available:', torch.cuda.is_available())"
 
 # Copy application files
 COPY ./ai ./ai

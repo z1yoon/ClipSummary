@@ -28,7 +28,7 @@ matplotlib>=3.5.0
 scipy>=1.9.0
 scikit-learn>=1.1.0
 
-# AI and ML dependencies - Exact WhisperX 3.3.4 requirements from GitHub
+# AI and ML dependencies - Updated for RTX 5090 support (requires PyTorch 2.7.0 + CUDA 12.8)
 whisperx==3.3.4
 ctranslate2<4.5.0
 faster-whisper>=1.1.1
@@ -36,8 +36,8 @@ nltk>=3.9.1
 onnxruntime>=1.19
 pandas>=2.2.3
 pyannote-audio>=3.3.2
-torch>=2.5.1
-torchaudio>=2.5.1
+torch>=2.7.0
+torchaudio>=2.7.0
 transformers>=4.48.0
 
 # Additional ML dependencies for compatibility
