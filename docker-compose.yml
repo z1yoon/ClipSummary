@@ -14,9 +14,11 @@ services:
     image: nginx:alpine
     ports:
       - "80:80"
+      - "443:443"  # Add HTTPS port
     volumes:
       - ./nginx/conf:/etc/nginx/conf.d
       - ./uploads:/var/www/uploads:ro  # Serve uploads as static files (read-only)
+      - ./ssl:/etc/nginx/ssl:ro  # Mount SSL certificates
     depends_on:
       - frontend
       - backend

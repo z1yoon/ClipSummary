@@ -112,25 +112,29 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
             'zh': 'zho_Hans'
         }
         
-        # Encode and translate using NLLB
-        device = next(model.parameters()).device
-        
-        # NLLB model translation - English source to target language
+        # Get target language code
         tgt_lang = nllb_lang_map.get(target_lang)
         if not tgt_lang:
             raise ValueError(f"Unsupported target language: {target_lang}")
         
-        # Prepare inputs
+        # Encode and translate using NLLB
+        device = next(model.parameters()).device
+        
+        # Prepare inputs - NLLB doesn't need source language prefix in newer versions
         inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
         input_ids = inputs["input_ids"].to(device)
         
-        # Generate translation with forced language code
+        # Set target language for generation
+        tokenizer.src_lang = "eng_Latn"
+        tokenizer.tgt_lang = tgt_lang
+        
+        # Generate translation
         outputs = model.generate(
             input_ids, 
-            forced_bos_token_id=tokenizer.lang_code_to_id[tgt_lang],
             max_length=512, 
             num_beams=4, 
-            length_penalty=0.6
+            length_penalty=0.6,
+            early_stopping=True
         )
         
         translated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -138,7 +142,7 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
         # Log completion
         translation_time = time.time() - start_time
         output_length = len(translated_text)
-        chars_per_second = text_length / translation_time
+        chars_per_second = text_length / translation_time if translation_time > 0 else 0
         
         logger.info(f"[{upload_id}] Translation completed:")
         logger.info(f"[{upload_id}] - Time taken: {translation_time:.2f} seconds")
