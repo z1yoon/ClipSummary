@@ -244,13 +244,47 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
+        let timeoutId = null;
+        let maxRetries = 40; // Maximum 40 retries (about 2 minutes)
+        let retryCount = 0;
+        
+        const cleanup = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+        };
         
         const checkStatus = async () => {
             try {
+                retryCount++;
+                
+                // Stop polling after max retries to prevent infinite loops
+                if (retryCount > maxRetries) {
+                    console.log('Max retries reached, stopping status checks');
+                    showError('Processing timed out. Please try again or check your connection.');
+                    cleanup();
+                    return;
+                }
+                
                 const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
+                
+                // Handle network errors or server restarts
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
                 const data = await response.json();
                 
-                console.log('Processing status:', data);
+                console.log(`Processing status (attempt ${retryCount}):`, data);
+                
+                // Check if we're getting the generic "Processing status not available" message
+                if (data.message === "Processing status not available." && retryCount > 10) {
+                    console.log('Backend appears to have lost track of this processing job');
+                    showError('Processing appears to have been interrupted. Please try submitting your video again.');
+                    cleanup();
+                    return;
+                }
                 
                 // Calculate elapsed time
                 const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
@@ -269,29 +303,46 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.status === 'completed') {
                     showProcessingStatus({
                         status: 'completed',
-                        progress: 100, 
+                        progress: 100,
                         message: `Processing completed successfully! Total time: ${totalElapsedTimeFormatted}`,
                         elapsedTime: totalElapsedTimeFormatted,
                     });
                     
+                    cleanup();
                     setTimeout(() => {
                         window.location.href = `/video.html?id=${uploadId}`;
                     }, 2500);
+                    
                 } else if (data.status === 'failed' || data.status === 'error') {
                     showError(data.message || 'Processing failed');
+                    cleanup();
+                    
                 } else {
                     // Continue checking status
-                    setTimeout(checkStatus, 3000);
+                    timeoutId = setTimeout(checkStatus, 3000);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
-                // Continue checking despite errors
-                setTimeout(checkStatus, 5000);
+                
+                // Handle specific error cases
+                if (error.message.includes('502') || error.message.includes('503')) {
+                    console.log('Backend is restarting, continuing to check...');
+                    timeoutId = setTimeout(checkStatus, 5000);
+                } else if (retryCount > maxRetries) {
+                    showError('Unable to check processing status. Please refresh the page and try again.');
+                    cleanup();
+                } else {
+                    // Continue checking despite errors
+                    timeoutId = setTimeout(checkStatus, 5000);
+                }
             }
         };
 
         // Start checking status immediately
         checkStatus();
+        
+        // Return cleanup function so it can be called externally if needed
+        return cleanup;
     }
 
     function showProcessingStatus(data) {
@@ -540,13 +591,47 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
+        let timeoutId = null;
+        let maxRetries = 40; // Maximum 40 retries (about 2 minutes)
+        let retryCount = 0;
+        
+        const cleanup = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+        };
         
         const checkStatus = async () => {
             try {
+                retryCount++;
+                
+                // Stop polling after max retries to prevent infinite loops
+                if (retryCount > maxRetries) {
+                    console.log('Max retries reached, stopping status checks');
+                    showError('Processing timed out. Please try again or check your connection.');
+                    cleanup();
+                    return;
+                }
+                
                 const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
+                
+                // Handle network errors or server restarts
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
                 const data = await response.json();
                 
-                console.log('Processing status:', data);
+                console.log(`Processing status (attempt ${retryCount}):`, data);
+                
+                // Check if we're getting the generic "Processing status not available" message
+                if (data.message === "Processing status not available." && retryCount > 10) {
+                    console.log('Backend appears to have lost track of this processing job');
+                    showError('Processing appears to have been interrupted. Please try submitting your video again.');
+                    cleanup();
+                    return;
+                }
                 
                 // Calculate elapsed time
                 const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
@@ -570,25 +655,41 @@ document.addEventListener('DOMContentLoaded', function() {
                         elapsedTime: totalElapsedTimeFormatted,
                     });
                     
+                    cleanup();
                     setTimeout(() => {
-                        window.location.href = `/video.html?id=${videoId}`;
-                    }, 1500);
+                        window.location.href = `/video.html?id=${uploadId}`;
+                    }, 2500);
                     
                 } else if (data.status === 'failed' || data.status === 'error') {
                     showError(data.message || 'Processing failed');
+                    cleanup();
                     
                 } else {
-                    // Continue checking
-                    setTimeout(checkStatus, 3000);
+                    // Continue checking status
+                    timeoutId = setTimeout(checkStatus, 3000);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
-                setTimeout(checkStatus, 5000);
+                
+                // Handle specific error cases
+                if (error.message.includes('502') || error.message.includes('503')) {
+                    console.log('Backend is restarting, continuing to check...');
+                    timeoutId = setTimeout(checkStatus, 5000);
+                } else if (retryCount > maxRetries) {
+                    showError('Unable to check processing status. Please refresh the page and try again.');
+                    cleanup();
+                } else {
+                    // Continue checking despite errors
+                    timeoutId = setTimeout(checkStatus, 5000);
+                }
             }
         };
 
         // Start checking status immediately
         checkStatus();
+        
+        // Return cleanup function so it can be called externally if needed
+        return cleanup;
     }
 
     function isValidYouTubeUrl(url) {
