@@ -262,14 +262,20 @@ async def get_processing_status(video_id: str):
 async def process_youtube_audio(video_id: str, title: str, url: str, 
                               languages: list[str], summary_length: int, cache_key: str):
     """Background task to process YouTube audio"""
+    from utils.cache import cache_result
+    from api.upload import update_processing_status
+    
     try:
         print(f"Starting YouTube processing for video ID: {video_id}")
         audio_path = f"uploads/{video_id}/audio.wav"
-        status_path = f"uploads/{video_id}/status.json"
         
-        # Update status
-        with open(status_path, 'w') as f:
-            json.dump({"status": "downloading", "progress": 0}, f)
+        # Initialize status tracking
+        update_processing_status(
+            upload_id=video_id,
+            status="processing",
+            progress=5,
+            message="Starting YouTube video download..."
+        )
             
         # First update yt-dlp to latest version
         try:
@@ -281,22 +287,16 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
         download_success = False
         error_messages = []
         
-        # Choose a different IP address for each request if proxy is available
-        proxy_options = []
-        try:
-            if os.environ.get('USE_PROXIES', 'false').lower() == 'true':
-                # This would normally read from a proper proxy configuration
-                # Replace with your actual proxy setup
-                proxy_options = ["--proxy", os.environ.get('HTTP_PROXY', '')]
-        except:
-            proxy_options = []
-        
         # Strategy 1: New Enhanced - Try the most reliable approach first with various client types
         if not download_success:
             try:
                 print("Strategy 1: Using enhanced reliable approach with multiple client types")
-                with open(status_path, 'w') as f:
-                    json.dump({"status": "downloading", "strategy": "enhanced-reliable", "progress": 15}, f)
+                update_processing_status(
+                    upload_id=video_id,
+                    status="processing",
+                    progress=15,
+                    message="Downloading audio from YouTube..."
+                )
                 
                 # Try different client types
                 client_types = ["android", "web", "android,web", "tv_embedded"]
@@ -320,10 +320,6 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
                         "--user-agent", get_random_user_agent(),
                     ]
                     
-                    # Add proxy if available
-                    if proxy_options:
-                        cmd.extend(proxy_options)
-                        
                     cmd.append(url)
                     
                     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -346,8 +342,12 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
         if not download_success:
             try:
                 print("Strategy 2: Using specific format with fallbacks")
-                with open(status_path, 'w') as f:
-                    json.dump({"status": "downloading", "strategy": "specific-formats", "progress": 25}, f)
+                update_processing_status(
+                    upload_id=video_id,
+                    status="processing",
+                    progress=25,
+                    message="Trying alternative download methods..."
+                )
                 
                 # Try different format specifications
                 format_specs = [
@@ -375,10 +375,6 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
                         "--user-agent", get_random_user_agent(),
                     ]
                     
-                    # Add proxy if available
-                    if proxy_options:
-                        cmd.extend(proxy_options)
-                        
                     cmd.append(url)
                     
                     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -393,87 +389,16 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
                 error_messages.append(error_msg)
                 print(error_msg)
         
-        # Strategy 3: Try bypassing age restriction
+        # Strategy 3: Try transcript extraction fallback
         if not download_success:
             try:
-                print("Strategy 3: Attempting to bypass age restriction")
-                with open(status_path, 'w') as f:
-                    json.dump({"status": "downloading", "strategy": "age-bypass", "progress": 30}, f)
-                
-                cmd = [
-                    "yt-dlp",
-                    "--no-playlist",
-                    "--age-limit", "21",
-                    "--cookies-from-browser", "chrome",
-                    "--user-agent", get_random_user_agent(),
-                    "-x", "--audio-format", "wav",
-                    "-o", f"uploads/{video_id}/audio.%(ext)s",
-                    url
-                ]
-                
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                
-                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 10000:
-                    download_success = True
-                    print("Strategy 3 successful: Age restriction bypass worked")
-                else:
-                    error_messages.append(f"Strategy 3 failed: {result.stderr}")
-                    print(f"Strategy 3 failed: {result.stderr}")
-            except Exception as e:
-                error_msg = f"Strategy 3 failed: {str(e)}"
-                error_messages.append(error_msg)
-                print(error_msg)
-                
-        # Strategy 4: Use youtube-dl as fallback since it might have different request patterns
-        if not download_success:
-            try:
-                print("Strategy 4: Using youtube-dl as fallback")
-                with open(status_path, 'w') as f:
-                    json.dump({"status": "downloading", "strategy": "youtube-dl-fallback", "progress": 35}, f)
-                
-                # Check if youtube-dl is installed
-                try:
-                    subprocess.run(["youtube-dl", "--version"], capture_output=True, check=True)
-                except:
-                    print("youtube-dl not found, installing it...")
-                    subprocess.run(["pip", "install", "--upgrade", "youtube-dl"], check=False)
-                
-                cmd = [
-                    "youtube-dl",
-                    "-f", "bestaudio",
-                    "--extract-audio",
-                    "--audio-format", "wav",
-                    "--no-warnings",
-                    "--no-check-certificate",
-                    "-o", f"uploads/{video_id}/audio.%(ext)s",
-                    "--user-agent", get_random_user_agent(),
-                ]
-                
-                # Add proxy if available
-                if proxy_options:
-                    cmd.extend([proxy_options[0].replace("--proxy", "--proxy-url"), proxy_options[1]])
-                    
-                cmd.append(url)
-                
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                
-                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 10000:
-                    download_success = True
-                    print("Strategy 4 successful: youtube-dl fallback")
-                else:
-                    error_messages.append(f"Strategy 4 failed: {result.stderr}")
-                    print(f"Strategy 4 failed: {result.stderr}")
-            except Exception as e:
-                error_msg = f"Strategy 4 failed: {str(e)}"
-                error_messages.append(error_msg)
-                print(error_msg)
-                
-        # Strategy 5: Transcript extraction fallback
-        if not download_success:
-            try:
-                print("Strategy 5: Using transcript API as fallback")
-                with open(status_path, 'w') as f:
-                    json.dump({"status": "using_transcript", "progress": 50}, f)
+                print("Strategy 3: Using transcript API as fallback")
+                update_processing_status(
+                    upload_id=video_id,
+                    status="processing",
+                    progress=30,
+                    message="Audio download failed, trying transcript extraction..."
+                )
                 
                 # Try to install youtube_transcript_api if not already installed
                 try:
@@ -492,6 +417,13 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
                 
                 if transcript_list:
                     print("Successfully retrieved transcript as fallback")
+                    update_processing_status(
+                        upload_id=video_id,
+                        status="processing",
+                        progress=50,
+                        message="Processing transcript data..."
+                    )
+                    
                     # Create a transcript structure
                     mock_transcript = {
                         "segments": [
@@ -504,16 +436,16 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
                         "language": "en"
                     }
                     
-                    # Save as JSON for processing
-                    with open(f"uploads/{video_id}/transcript.json", "w") as f:
-                        json.dump(mock_transcript, f)
-                    
                     # Generate summary from transcript directly
-                    with open(status_path, 'w') as f:
-                        json.dump({"status": "summarizing", "progress": 70}, f)
+                    update_processing_status(
+                        upload_id=video_id,
+                        status="processing",
+                        progress=70,
+                        message="Generating summary from transcript..."
+                    )
                     
                     transcript_text = ' '.join([segment['text'] for segment in mock_transcript["segments"]])
-                    summary = generate_summary(transcript_text, max_sentences=summary_length)
+                    summary = generate_summary(transcript_text, max_sentences=summary_length, upload_id=video_id)
                     
                     # Prepare results with the original language (English)
                     result = {
@@ -529,19 +461,23 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
                     }
                     
                     # Translate to requested languages
-                    with open(status_path, 'w') as f:
-                        json.dump({"status": "translating", "progress": 80}, f)
+                    update_processing_status(
+                        upload_id=video_id,
+                        status="processing",
+                        progress=80,
+                        message="Translating content..."
+                    )
                     
                     for lang in languages:
                         if lang != "en":  # Skip English as it's already done
                             print(f"Translating to {lang}")
                             result["translations"][lang] = {
-                                "summary": translate_text(summary, target_lang=lang),
+                                "summary": translate_text(summary, target_lang=lang, upload_id=video_id),
                                 "transcript": [
                                     {
                                         "start": segment["start"],
                                         "end": segment["end"],
-                                        "text": translate_text(segment["text"], target_lang=lang)
+                                        "text": translate_text(segment["text"], target_lang=lang, upload_id=video_id)
                                     }
                                     for segment in mock_transcript["segments"]
                                 ]
@@ -554,8 +490,12 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
                     # Cache the result
                     cache_result(cache_key, result)
                     
-                    with open(status_path, 'w') as f:
-                        json.dump({"status": "completed", "progress": 100}, f)
+                    update_processing_status(
+                        upload_id=video_id,
+                        status="completed",
+                        progress=100,
+                        message="Processing completed successfully."
+                    )
                     
                     print(f"YouTube processing completed via transcript API for {video_id}")
                     return  # Early return since we're done
@@ -577,25 +517,17 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
         # Check if the audio file is valid
         if audio_size < 10000:  # Less than 10KB is suspicious
             raise Exception("Downloaded audio file is too small and likely invalid")
-            
-        # Enhanced audio validation
-        if audio_size > 10000:
-            try:
-                # Try to read the first few bytes of the file to verify it's valid
-                with open(audio_path, 'rb') as f:
-                    header = f.read(12)
-                if not header or len(header) < 12:
-                    raise Exception("Audio file appears to be corrupted (header too small)")
-            except Exception as e:
-                print(f"Audio validation error: {str(e)}")
-                # We'll continue anyway since the file might still be usable
         
         # Transcribe with WhisperX
-        with open(status_path, 'w') as f:
-            json.dump({"status": "transcribing", "progress": 60}, f)
+        update_processing_status(
+            upload_id=video_id,
+            status="processing",
+            progress=40,
+            message="Audio downloaded successfully. Starting transcription..."
+        )
         
         print(f"Starting transcription for {video_id}")
-        transcript = transcribe_audio(audio_path)
+        transcript = transcribe_audio(audio_path, upload_id=video_id)
         
         if not transcript or "segments" not in transcript or not transcript["segments"]:
             raise Exception("Transcription failed: No transcription segments were generated")
@@ -603,11 +535,15 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
         print(f"Transcription completed with {len(transcript['segments'])} segments")
         
         # Generate summary (English)
-        with open(status_path, 'w') as f:
-            json.dump({"status": "summarizing", "progress": 80}, f)
+        update_processing_status(
+            upload_id=video_id,
+            status="processing",
+            progress=70,
+            message="Generating summary..."
+        )
         
         summary = generate_summary(' '.join([segment['text'] for segment in transcript['segments']]), 
-                                  max_sentences=summary_length)
+                                  max_sentences=summary_length, upload_id=video_id)
         
         print(f"Summary generated, length: {len(summary)} characters")
         
@@ -625,24 +561,29 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
         }
         
         # Translate to requested languages
-        with open(status_path, 'w') as f:
-            json.dump({"status": "translating", "progress": 90}, f)
-        
-        for lang in languages:
-            if lang != "en":  # Skip English as it's already done
-                print(f"Translating to {lang}")
-                result["translations"][lang] = {
-                    "summary": translate_text(summary, target_lang=lang),
-                    "transcript": [
-                        {
-                            "start": segment["start"],
-                            "end": segment["end"],
-                            "text": translate_text(segment["text"], target_lang=lang)
-                        }
-                        for segment in transcript["segments"]
-                    ]
-                }
-                print(f"Translation to {lang} completed")
+        if len([lang for lang in languages if lang != "en"]) > 0:
+            update_processing_status(
+                upload_id=video_id,
+                status="processing",
+                progress=80,
+                message="Translating content..."
+            )
+            
+            for lang in languages:
+                if lang != "en":  # Skip English as it's already done
+                    print(f"Translating to {lang}")
+                    result["translations"][lang] = {
+                        "summary": translate_text(summary, target_lang=lang, upload_id=video_id),
+                        "transcript": [
+                            {
+                                "start": segment["start"],
+                                "end": segment["end"],
+                                "text": translate_text(segment["text"], target_lang=lang, upload_id=video_id)
+                            }
+                            for segment in transcript["segments"]
+                        ]
+                    }
+                    print(f"Translation to {lang} completed")
         
         # Save results
         with open(f"uploads/{video_id}/result.json", 'w') as f:
@@ -651,35 +592,27 @@ async def process_youtube_audio(video_id: str, title: str, url: str,
         # Cache the result
         cache_result(cache_key, result)
         
-        with open(status_path, 'w') as f:
-            json.dump({"status": "completed", "progress": 100}, f)
+        update_processing_status(
+            upload_id=video_id,
+            status="completed",
+            progress=100,
+            message="Processing completed successfully."
+        )
         
         print(f"YouTube processing completed successfully for {video_id}")
         
     except Exception as e:
         error_message = f"Processing failed: {str(e)}"
         print(f"Error processing YouTube video {video_id}: {error_message}")
+        
+        # Update status to failed
+        update_processing_status(
+            upload_id=video_id,
+            status="failed",
+            progress=0,
+            message=error_message
+        )
+        
         # Log the error
         with open(f"uploads/{video_id}/error.log", 'w') as f:
             f.write(error_message)
-        
-        # Update status to failed
-        try:
-            with open(status_path, 'w') as f:
-                json.dump({"status": "failed", "error": str(e)}, f)
-        except:
-            pass
-
-@router.get("/result/{video_id}")
-async def get_processing_result(video_id: str):
-    """Get the result of video processing."""
-    # This would typically fetch from a database or cache
-    # For simplicity, we'll just check if the file exists
-    result_file = f"uploads/{video_id}/result.json"
-    if os.path.exists(result_file):
-        import json
-        with open(result_file, 'r') as f:
-            result = json.load(f)
-        return result
-    else:
-        raise HTTPException(status_code=404, detail="Result not found. The video may still be processing.")

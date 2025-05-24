@@ -525,8 +525,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     startTime: Date.now()
                 });
                 
-                // Begin tracking the processing status using the correct video ID
-                trackVideoProcessing(videoId);
+                // Begin tracking the processing status using the upload status endpoint
+                trackProcessing(videoId);
             } else {
                 throw new Error('No video ID in response');
             }
@@ -538,22 +538,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    function trackVideoProcessing(videoId) {
+    function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
-
+        
         const checkStatus = async () => {
             try {
-                const response = await fetchWithAuth(`/api/videos/${videoId}/status`);
-                if (!response.ok) {
-                    if (response.status === 404) {
-                        showError('Video not found. It may have been deleted or processing failed.');
-                        return;
-                    }
-                    throw new Error(`Status check failed: ${response.status}`);
-                }
+                const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
                 const data = await response.json();
                 
-                console.log('Video processing status:', data);
+                console.log('Processing status:', data);
                 
                 // Calculate elapsed time
                 const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
