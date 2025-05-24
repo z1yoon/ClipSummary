@@ -64,4 +64,6 @@ clipSummary/
 
 The application is configured for deployment on Azure Container Apps using GitHub Actions for CI/CD.
 
+## License
 
+[MIT License](LICENSE)
