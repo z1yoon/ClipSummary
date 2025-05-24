@@ -29,7 +29,6 @@ services:
     volumes:
       - ./backend:/app
       - ./uploads:/app/uploads  # Bind mount for uploads
-      - ./cache:/app/cache      # Bind mount for cache (easier debugging)
       - ./models:/app/.cache/huggingface  # Bind mount for models
     environment:
       - PYTHONUNBUFFERED=1
