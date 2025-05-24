@@ -1,8 +1,10 @@
-from transformers import MarianMTModel, MarianTokenizer
+import os
+from pathlib import Path
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import torch
 import logging
 import time
-from typing import Dict, List
+from typing import Dict, List, Tuple, Any, Union
 from utils.cache import update_processing_status
 
 # Configure logging
@@ -10,35 +12,44 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Cache for loaded models
-model_cache: Dict[str, tuple[MarianMTModel, MarianTokenizer]] = {}
+model_cache: Dict[str, Tuple[Any, Any]] = {}
 
-def get_model_name(target_lang: str) -> str:
-    """Get the appropriate model name for the target language."""
-    lang_to_model = {
-        'es': 'Helsinki-NLP/opus-mt-en-es',
-        'fr': 'Helsinki-NLP/opus-mt-en-fr',
-        'de': 'Helsinki-NLP/opus-mt-en-de',
-        'zh': 'Helsinki-NLP/opus-mt-en-zh',
-        'ja': 'Helsinki-NLP/opus-mt-en-jap',
-        'ko': 'Helsinki-NLP/opus-mt-en-ko',
-        'ru': 'Helsinki-NLP/opus-mt-en-ru',
-        'ar': 'Helsinki-NLP/opus-mt-en-ar',
-        'hi': 'Helsinki-NLP/opus-mt-en-hi'
-    }
-    return lang_to_model.get(target_lang, 'Helsinki-NLP/opus-mt-en-ROMANCE')
+def get_models_path() -> Path:
+    """Get the path to the models directory."""
+    # In Docker, models are mounted at /app/models
+    # In development, they're in the project root/models
+    if os.path.exists("/app/models"):
+        return Path("/app/models")
+    else:
+        # Development path
+        project_root = Path(__file__).resolve().parent.parent.parent
+        return project_root / "models"
 
-def load_translation_model(target_lang: str, upload_id: str = None) -> tuple[MarianMTModel, MarianTokenizer]:
-    """Load translation model with detailed logging."""
-    model_name = get_model_name(target_lang)
+def get_model_path(target_lang: str) -> str:
+    """Get the local path for the translation model."""
+    if target_lang not in ['zh', 'ko']:
+        raise ValueError(f"Unsupported language: {target_lang}. Only 'zh' (Chinese) and 'ko' (Korean) are supported.")
     
-    # Check cache first
-    if model_name in model_cache:
+    models_path = get_models_path()
+    model_dir = models_path / "facebook--nllb-200-distilled-600M"
+    
+    if not model_dir.exists():
+        raise FileNotFoundError(f"Model not found at {model_dir}. Please run download_models.py first.")
+    
+    return str(model_dir)
+
+def load_translation_model(target_lang: str, upload_id: str = None) -> Tuple[Any, Any]:
+    """Load translation model from local path with detailed logging."""
+    model_path = get_model_path(target_lang)
+    
+    # Check cache first (use model_path as cache key)
+    if model_path in model_cache:
         logger.info(f"[{upload_id}] Using cached translation model for {target_lang}")
-        return model_cache[model_name]
+        return model_cache[model_path]
     
     try:
         start_time = time.time()
-        logger.info(f"[{upload_id}] Loading translation model for {target_lang} ({model_name})")
+        logger.info(f"[{upload_id}] Loading translation model for {target_lang} from {model_path}")
         
         # Log CUDA status
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -47,19 +58,19 @@ def load_translation_model(target_lang: str, upload_id: str = None) -> tuple[Mar
             logger.info(f"[{upload_id}] CUDA Device: {torch.cuda.get_device_name(0)}")
             logger.info(f"[{upload_id}] Available VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         
-        # Load tokenizer and model
+        # Load NLLB tokenizer and model from local path
         tokenizer_start = time.time()
-        tokenizer = MarianTokenizer.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
         tokenizer_time = time.time() - tokenizer_start
         logger.info(f"[{upload_id}] Tokenizer loaded in {tokenizer_time:.2f} seconds")
         
         model_start = time.time()
-        model = MarianMTModel.from_pretrained(model_name).to(device)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_path, local_files_only=True).to(device)
         model_time = time.time() - model_start
         logger.info(f"[{upload_id}] Model loaded in {model_time:.2f} seconds")
         
         # Cache the loaded model
-        model_cache[model_name] = (model, tokenizer)
+        model_cache[model_path] = (model, tokenizer)
         
         total_time = time.time() - start_time
         logger.info(f"[{upload_id}] Translation model setup completed in {total_time:.2f} seconds")
@@ -67,9 +78,9 @@ def load_translation_model(target_lang: str, upload_id: str = None) -> tuple[Mar
         return model, tokenizer
         
     except Exception as e:
-        error_msg = f"Failed to load translation model: {str(e)}"
+        error_msg = f"Failed to load translation model from {model_path}: {str(e)}"
         logger.error(f"[{upload_id}] {error_msg}")
-        raise Exception(error_msg)
+        raise RuntimeError(error_msg)
 
 def translate_text(text: str, target_lang: str, upload_id: str = None, 
                   segment_index: int = None, total_segments: int = None) -> str:
@@ -95,13 +106,33 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
                     message=progress_msg
                 )
         
-        # Encode and translate
+        # Map target language to NLLB format
+        nllb_lang_map = {
+            'ko': 'kor_Kore',
+            'zh': 'zho_Hans'
+        }
+        
+        # Encode and translate using NLLB
         device = next(model.parameters()).device
+        
+        # NLLB model translation - English source to target language
+        tgt_lang = nllb_lang_map.get(target_lang)
+        if not tgt_lang:
+            raise ValueError(f"Unsupported target language: {target_lang}")
+        
+        # Prepare inputs
         inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
         input_ids = inputs["input_ids"].to(device)
         
-        # Generate translation
-        outputs = model.generate(input_ids, max_length=512, num_beams=4, length_penalty=0.6)
+        # Generate translation with forced language code
+        outputs = model.generate(
+            input_ids, 
+            forced_bos_token_id=tokenizer.lang_code_to_id[tgt_lang],
+            max_length=512, 
+            num_beams=4, 
+            length_penalty=0.6
+        )
+        
         translated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
         # Log completion
@@ -127,7 +158,7 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
                 progress=0,
                 message=error_msg
             )
-        raise Exception(error_msg)
+        raise RuntimeError(error_msg)
 
 def batch_translate(texts: List[str], target_lang: str, upload_id: str = None) -> List[str]:
     """Batch translate multiple texts with progress tracking."""
@@ -168,7 +199,7 @@ def batch_translate(texts: List[str], target_lang: str, upload_id: str = None) -
                 progress=0,
                 message=error_msg
             )
-        raise Exception(error_msg)
+        raise RuntimeError(error_msg)
 
 def translate_summary(summary_text: str, target_lang: str, upload_id: str = None) -> str:
     """Translate summary text to target language."""
@@ -231,12 +262,5 @@ def get_supported_languages() -> Dict[str, str]:
     """Get list of supported translation languages."""
     return {
         'zh': 'Chinese',
-        'ko': 'Korean',
-        'es': 'Spanish',
-        'fr': 'French',
-        'de': 'German',
-        'ja': 'Japanese',
-        'ru': 'Russian',
-        'ar': 'Arabic',
-        'hi': 'Hindi'
+        'ko': 'Korean'
     }

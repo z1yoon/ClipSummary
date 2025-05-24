@@ -29,11 +29,11 @@ services:
     volumes:
       - ./backend:/app
       - ./uploads:/app/uploads  # Bind mount for uploads
-      - ./models:/app/.cache/huggingface  # Bind mount for models
+      - ./models:/app/models  # Bind mount for models
     environment:
       - PYTHONUNBUFFERED=1
-      - TRANSFORMERS_CACHE=/app/.cache/huggingface
-      - HF_HOME=/app/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/models
+      - HF_HOME=/app/models
       - CUDA_VISIBLE_DEVICES=0
       - TORCH_USE_CUDA_DSA=1
     env_file:
