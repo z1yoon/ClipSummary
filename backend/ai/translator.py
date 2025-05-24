@@ -84,26 +84,30 @@ def load_translation_model(target_lang: str, upload_id: str = None) -> Tuple[Any
 
 def translate_text(text: str, target_lang: str, upload_id: str = None, 
                   segment_index: int = None, total_segments: int = None) -> str:
-    """Translate text with detailed logging and progress updates."""
+    """Translate text with minimal logging."""
     try:
         # Load model
         model, tokenizer = load_translation_model(target_lang, upload_id)
         
-        # Log translation attempt
-        start_time = time.time()
-        text_length = len(text)
-        logger.info(f"[{upload_id}] Translating text to {target_lang} (length: {text_length} chars)")
+        # Only log every 10th segment or for summary
+        should_log = (segment_index is None or 
+                     total_segments is None or 
+                     segment_index % 10 == 0 or 
+                     segment_index == 1 or 
+                     segment_index == total_segments)
         
-        if segment_index is not None and total_segments is not None:
-            progress_msg = f"Translating segment {segment_index}/{total_segments} to {target_lang}"
-            logger.info(f"[{upload_id}] {progress_msg}")
-            if upload_id:
-                progress = 50 + ((segment_index / total_segments) * 40)
+        if should_log:
+            logger.info(f"[{upload_id}] Translating to {target_lang} - segment {segment_index}/{total_segments}")
+        
+        if segment_index is not None and total_segments is not None and upload_id:
+            progress = 50 + ((segment_index / total_segments) * 40)
+            # Only update status every 10 segments to reduce backend load
+            if segment_index % 10 == 0:
                 update_processing_status(
                     upload_id=upload_id,
                     status="processing",
                     progress=progress,
-                    message=progress_msg
+                    message=f"Translating to {target_lang} ({segment_index}/{total_segments})"
                 )
         
         # Map target language to NLLB format
@@ -117,38 +121,39 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
         if not tgt_lang:
             raise ValueError(f"Unsupported target language: {target_lang}")
         
-        # Encode and translate using NLLB
+        # Encode and translate using NLLB with proper language forcing
         device = next(model.parameters()).device
         
-        # Prepare inputs - NLLB doesn't need source language prefix in newer versions
-        inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        input_ids = inputs["input_ids"].to(device)
-        
-        # Set target language for generation
+        # For NLLB, we need to properly set the source and target language tokens
         tokenizer.src_lang = "eng_Latn"
-        tokenizer.tgt_lang = tgt_lang
+        encoded = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
-        # Generate translation
-        outputs = model.generate(
-            input_ids, 
-            max_length=512, 
-            num_beams=4, 
-            length_penalty=0.6,
-            early_stopping=True
-        )
+        # Move inputs to device
+        input_ids = encoded["input_ids"].to(device)
+        attention_mask = encoded["attention_mask"].to(device)
         
+        # Generate translation with forced target language token
+        # For NLLB, we use forced_bos_token_id to force the target language
+        target_lang_id = tokenizer.lang_code_to_id[tgt_lang]
+        
+        with torch.no_grad():
+            outputs = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                forced_bos_token_id=target_lang_id,
+                max_length=512,
+                num_beams=4,
+                length_penalty=0.6,
+                early_stopping=True,
+                do_sample=False
+            )
+        
+        # Decode the translation
         translated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        # Log completion
-        translation_time = time.time() - start_time
-        output_length = len(translated_text)
-        chars_per_second = text_length / translation_time if translation_time > 0 else 0
-        
-        logger.info(f"[{upload_id}] Translation completed:")
-        logger.info(f"[{upload_id}] - Time taken: {translation_time:.2f} seconds")
-        logger.info(f"[{upload_id}] - Input length: {text_length} chars")
-        logger.info(f"[{upload_id}] - Output length: {output_length} chars")
-        logger.info(f"[{upload_id}] - Speed: {chars_per_second:.2f} chars/second")
+        # Log a sample translation for debugging
+        if should_log and upload_id:
+            logger.info(f"[{upload_id}] Translation sample: '{text[:50]}...' -> '{translated_text[:50]}...'")
         
         return translated_text
         
