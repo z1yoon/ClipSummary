@@ -248,12 +248,16 @@ document.addEventListener('DOMContentLoaded', function() {
         let maxRetries = 40; // Maximum 40 retries (about 2 minutes)
         let retryCount = 0;
         
+        // Cleanup function to stop polling
         const cleanup = () => {
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = null;
             }
         };
+        
+        // Store cleanup function globally so it can be called on page unload
+        window.currentProcessingCleanup = cleanup;
         
         const checkStatus = async () => {
             try {
@@ -595,12 +599,16 @@ document.addEventListener('DOMContentLoaded', function() {
         let maxRetries = 40; // Maximum 40 retries (about 2 minutes)
         let retryCount = 0;
         
+        // Cleanup function to stop polling
         const cleanup = () => {
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = null;
             }
         };
+        
+        // Store cleanup function globally so it can be called on page unload
+        window.currentProcessingCleanup = cleanup;
         
         const checkStatus = async () => {
             try {
@@ -771,4 +779,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    
+    // Clean up any running processing when page unloads
+    window.addEventListener('beforeunload', function() {
+        if (window.currentProcessingCleanup) {
+            window.currentProcessingCleanup();
+        }
+    });
 });
