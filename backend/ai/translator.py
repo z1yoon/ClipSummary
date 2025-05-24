@@ -84,7 +84,7 @@ def load_translation_model(target_lang: str, upload_id: str = None) -> Tuple[Any
 
 def translate_text(text: str, target_lang: str, upload_id: str = None, 
                   segment_index: int = None, total_segments: int = None) -> str:
-    """Translate text with minimal logging."""
+    """Translate text using NLLB model with correct language forcing."""
     try:
         # Load model
         model, tokenizer = load_translation_model(target_lang, upload_id)
@@ -121,35 +121,62 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
         if not tgt_lang:
             raise ValueError(f"Unsupported target language: {target_lang}")
         
-        # Set the source and target languages properly for NLLB
+        # For NLLB, we need to set the target language before tokenization
         tokenizer.src_lang = "eng_Latn"
         tokenizer.tgt_lang = tgt_lang
         
-        # Encode the input text
-        encoded = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        # Tokenize the input text
+        inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
         # Move to device
         device = next(model.parameters()).device
-        input_ids = encoded["input_ids"].to(device)
-        attention_mask = encoded["attention_mask"].to(device)
+        input_ids = inputs["input_ids"].to(device)
         
-        # Get the target language token ID using the convert_tokens_to_ids method
-        target_lang_token = tokenizer.convert_tokens_to_ids(tgt_lang)
+        # The key fix: NLLB models expect the target language token as forced_bos_token_id
+        # We need to get the token id for the target language
+        try:
+            # Method 1: Try to get language token id directly
+            if hasattr(tokenizer, 'lang_code_to_id'):
+                target_lang_id = tokenizer.lang_code_to_id[tgt_lang]
+            else:
+                # Method 2: Convert language code to token id
+                target_lang_id = tokenizer.convert_tokens_to_ids([tgt_lang])[0]
+                
+            # If that fails, try method 3: encode and get first token
+            if target_lang_id == tokenizer.unk_token_id:
+                # Set tokenizer to target language and get the special token
+                tokenizer.tgt_lang = tgt_lang
+                dummy_encode = tokenizer("", return_tensors="pt")
+                target_lang_id = dummy_encode.input_ids[0, 0].item()
+        except:
+            # Fallback: just generate without forced language token
+            logger.warning(f"[{upload_id}] Could not determine target language token, using fallback")
+            target_lang_id = None
         
-        # Generate translation with proper NLLB setup
+        # Generate translation
         with torch.no_grad():
-            outputs = model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                forced_bos_token_id=target_lang_token,
-                max_length=512,
-                num_beams=4,
-                length_penalty=0.6,
-                early_stopping=True,
-                do_sample=False
-            )
+            if target_lang_id is not None:
+                outputs = model.generate(
+                    input_ids,
+                    forced_bos_token_id=target_lang_id,
+                    max_length=512,
+                    num_beams=4,
+                    length_penalty=0.6,
+                    early_stopping=True,
+                    do_sample=False
+                )
+            else:
+                # Fallback generation without forced language token
+                outputs = model.generate(
+                    input_ids,
+                    max_length=512,
+                    num_beams=4,
+                    length_penalty=0.6,
+                    early_stopping=True,
+                    do_sample=False
+                )
         
-        # Decode the translation, skipping special tokens
+        # Decode the translation
         translated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
         # Log a sample translation for debugging

@@ -128,16 +128,16 @@ def generate_summary(text: str, max_sentences: int = 3, upload_id: str = None) -
         tokenize_time = time.time() - tokenize_start
         logger.info(f"[{upload_id}] Text tokenized in {tokenize_time:.2f} seconds")
         
-        # Generate summary with better parameters for longer output
+        # Generate summary with better parameters for much longer output
         generate_start = time.time()
         with torch.no_grad():
             summary_ids = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
-                max_length=500,  # Increased from 300 to allow for much longer summaries
-                min_length=200,  # Increased from 100 to ensure longer content
-                num_beams=4,
-                length_penalty=1.5,  # Reduced slightly to encourage longer content
+                max_length=800,  # Increased significantly for much longer summaries
+                min_length=300,  # Increased minimum to ensure substantial content
+                num_beams=6,     # More beams for better quality
+                length_penalty=0.8,  # Encourage longer content
                 early_stopping=True,
                 no_repeat_ngram_size=3,  # Avoid repetition
                 do_sample=False  # Use deterministic generation
