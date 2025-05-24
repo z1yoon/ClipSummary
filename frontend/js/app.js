@@ -647,7 +647,8 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             console.log('Success:', data);
             // Check if processing started successfully
-            if (data.video_id) {
+            if (data.upload_id || data.video_id) {
+                const videoId = data.upload_id || data.video_id;
                 showProcessingStatus({
                     status: 'processing',
                     progress: 10,
@@ -655,8 +656,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     startTime: Date.now()
                 });
                 
-                // Begin tracking the processing status
-                trackYouTubeProcessing(data.video_id);
+                // Begin tracking the processing status using the correct video ID
+                trackVideoProcessing(videoId);
             } else {
                 throw new Error('No video ID in response');
             }
@@ -668,8 +669,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    function trackYouTubeProcessing(videoId) {
-        // Remove dependency on the statusElement check
+    function trackVideoProcessing(videoId) {
         const startTime = Date.now();
         let processingStep = 1;
         const processingSteps = [
@@ -700,13 +700,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const checkStatus = async () => {
             try {
-                const response = await fetchWithAuth(`/api/youtube/status/${videoId}`);
+                // Use the correct video status endpoint instead of YouTube status endpoint
+                const response = await fetchWithAuth(`/api/videos/${videoId}/status`);
                 if (!response.ok) {
+                    if (response.status === 404) {
+                        // Video not found - stop polling and show error
+                        clearInterval(stepInterval);
+                        showError('Video not found. It may have been deleted or processing failed.');
+                        return;
+                    }
                     throw new Error(`Status check failed: ${response.status}`);
                 }
                 const data = await response.json();
                 
-                console.log('YouTube processing status:', data);
+                console.log('Video processing status:', data);
                 
                 if (data.status === 'completed') {
                     // Clear the step interval
@@ -725,19 +732,29 @@ document.addEventListener('DOMContentLoaded', function() {
                         window.location.href = `/video.html?id=${videoId}`;
                     }, 1500);
                     
-                } else if (data.status === 'failed') {
+                } else if (data.status === 'failed' || data.status === 'error') {
                     // Clear the step interval
                     clearInterval(stepInterval);
                     
                     showError(data.message || 'Processing failed');
                     
                 } else {
+                    // Update progress if available from backend
+                    if (data.progress) {
+                        showProcessingStatus({
+                            status: 'processing',
+                            progress: data.progress,
+                            message: data.message || processingSteps[Math.min(processingStep, processingSteps.length - 1)].message,
+                            startTime: startTime
+                        });
+                    }
+                    
                     // Continue checking
                     setTimeout(checkStatus, 3000);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
-                // Still continue checking despite errors
+                // Still continue checking despite errors, but less frequently
                 setTimeout(checkStatus, 5000);
             }
         };
