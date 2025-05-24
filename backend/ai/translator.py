@@ -121,26 +121,27 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
         if not tgt_lang:
             raise ValueError(f"Unsupported target language: {target_lang}")
         
-        # Encode and translate using NLLB with proper language forcing
-        device = next(model.parameters()).device
-        
-        # For NLLB, we need to properly set the source and target language tokens
+        # Set the source and target languages properly for NLLB
         tokenizer.src_lang = "eng_Latn"
+        tokenizer.tgt_lang = tgt_lang
+        
+        # Encode the input text
         encoded = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
-        # Move inputs to device
+        # Move to device
+        device = next(model.parameters()).device
         input_ids = encoded["input_ids"].to(device)
         attention_mask = encoded["attention_mask"].to(device)
         
-        # Generate translation with forced target language token
-        # For NLLB, we use forced_bos_token_id to force the target language
-        target_lang_id = tokenizer.lang_code_to_id[tgt_lang]
+        # Get the target language token ID using the convert_tokens_to_ids method
+        target_lang_token = tokenizer.convert_tokens_to_ids(tgt_lang)
         
+        # Generate translation with proper NLLB setup
         with torch.no_grad():
             outputs = model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                forced_bos_token_id=target_lang_id,
+                forced_bos_token_id=target_lang_token,
                 max_length=512,
                 num_beams=4,
                 length_penalty=0.6,
@@ -148,7 +149,7 @@ def translate_text(text: str, target_lang: str, upload_id: str = None,
                 do_sample=False
             )
         
-        # Decode the translation
+        # Decode the translation, skipping special tokens
         translated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
         # Log a sample translation for debugging
