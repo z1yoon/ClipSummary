@@ -13,12 +13,35 @@ RUN apt-get update && apt-get install -y \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Create symbolic links for cuDNN compatibility (cuDNN 8 to cuDNN 9)
-# This fixes the "libcudnn_ops_infer.so.8" error
-RUN find /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib -name "*.so.9" | while read lib; do \
-        base=$(basename "$lib" .so.9); \
-        ln -sf "$lib" "/usr/local/cuda/lib64/${base}.so.8"; \
-    done
+# Fix cuDNN library compatibility (cuDNN 8 to cuDNN 9 mapping)
+# This creates proper symbolic links for legacy cuDNN 8 library names
+RUN mkdir -p /usr/local/cuda/lib64 && \
+    # First, find the actual cuDNN 9 libraries
+    CUDNN_LIB_PATH="/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib" && \
+    # Create specific symbolic links for the libraries that are commonly needed
+    if [ -f "$CUDNN_LIB_PATH/libcudnn.so.9" ]; then \
+        ln -sf "$CUDNN_LIB_PATH/libcudnn.so.9" /usr/local/cuda/lib64/libcudnn.so.8; \
+    fi && \
+    if [ -f "$CUDNN_LIB_PATH/libcudnn_ops_infer.so.9" ]; then \
+        ln -sf "$CUDNN_LIB_PATH/libcudnn_ops_infer.so.9" /usr/local/cuda/lib64/libcudnn_ops_infer.so.8; \
+    fi && \
+    if [ -f "$CUDNN_LIB_PATH/libcudnn_ops_train.so.9" ]; then \
+        ln -sf "$CUDNN_LIB_PATH/libcudnn_ops_train.so.9" /usr/local/cuda/lib64/libcudnn_ops_train.so.8; \
+    fi && \
+    if [ -f "$CUDNN_LIB_PATH/libcudnn_adv_infer.so.9" ]; then \
+        ln -sf "$CUDNN_LIB_PATH/libcudnn_adv_infer.so.9" /usr/local/cuda/lib64/libcudnn_adv_infer.so.8; \
+    fi && \
+    if [ -f "$CUDNN_LIB_PATH/libcudnn_adv_train.so.9" ]; then \
+        ln -sf "$CUDNN_LIB_PATH/libcudnn_adv_train.so.9" /usr/local/cuda/lib64/libcudnn_adv_train.so.8; \
+    fi && \
+    if [ -f "$CUDNN_LIB_PATH/libcudnn_cnn_infer.so.9" ]; then \
+        ln -sf "$CUDNN_LIB_PATH/libcudnn_cnn_infer.so.9" /usr/local/cuda/lib64/libcudnn_cnn_infer.so.8; \
+    fi && \
+    if [ -f "$CUDNN_LIB_PATH/libcudnn_cnn_train.so.9" ]; then \
+        ln -sf "$CUDNN_LIB_PATH/libcudnn_cnn_train.so.9" /usr/local/cuda/lib64/libcudnn_cnn_train.so.8; \
+    fi && \
+    # Verify the links were created
+    ls -la /usr/local/cuda/lib64/libcudnn*
 
 WORKDIR /app
 
@@ -28,8 +51,8 @@ ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_OFFLINE=0
-# Updated library paths for PyTorch 2.7.0 with CUDA 12.8 and cuDNN compatibility
-ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/opt/conda/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+# Updated library paths - ensure both cuDNN 9 and compatibility links are found
+ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/cuda/lib64:/opt/conda/lib:$LD_LIBRARY_PATH
 
 # Copy requirements file
 COPY requirements.txt .
