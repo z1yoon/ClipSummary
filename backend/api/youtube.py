@@ -172,11 +172,6 @@ async def process_youtube_video(
         # Extract YouTube video ID for info and caching
         youtube_video_id = extract_video_id(str(request.url))
         
-        # Generate UNIQUE processing ID for this request (not the YouTube video ID)
-        processing_id = str(uuid.uuid4())
-        
-        print(f"🆔 New processing request - Processing ID: {processing_id}, YouTube ID: {youtube_video_id}")
-        
         # Generate cache key using YouTube video ID (for caching across requests)
         cache_key = f"youtube:{youtube_video_id}:{','.join(request.languages)}:{request.summary_length}"
         
@@ -184,11 +179,64 @@ async def process_youtube_video(
         cached = get_cached_result(cache_key)
         if cached:
             print(f"💾 Found cached result for YouTube ID: {youtube_video_id}")
-            # Return cached results with new processing ID
+            # Generate a new processing ID for this request
+            processing_id = str(uuid.uuid4())
+            
+            # Create directory and save the cached result immediately
+            os.makedirs(f"uploads/{processing_id}", exist_ok=True)
+            
+            # Save the cached result as a completed result
             cached_copy = cached.copy()
             cached_copy["upload_id"] = processing_id
             cached_copy["video_id"] = processing_id
-            return cached_copy
+            
+            # Save to result.json immediately
+            with open(f"uploads/{processing_id}/result.json", 'w') as f:
+                json.dump(cached_copy, f)
+            
+            # Save info.json
+            with open(f"uploads/{processing_id}/info.json", 'w') as f:
+                json.dump({
+                    "processing_id": processing_id,
+                    "youtube_video_id": youtube_video_id,
+                    "url": str(request.url),
+                    "title": cached_copy.get('title'),
+                    "thumbnail": cached_copy.get('thumbnail'),
+                    "duration": cached_copy.get('duration'),
+                    "languages_requested": request.languages,
+                    "summary_length": request.summary_length,
+                    "upload_time": time.time(),
+                    "user_id": current_user.get('id'),
+                    "user_name": current_user.get('username'),
+                    "is_youtube": True,
+                    "cached_result": True
+                }, f)
+            
+            # Set status to completed immediately
+            from utils.cache import update_processing_status
+            update_processing_status(
+                upload_id=processing_id,
+                status="completed",
+                progress=100,
+                message="Processing completed (from cache)."
+            )
+            
+            # Return with completed status - this tells frontend to go directly to result page
+            return {
+                "status": "completed",
+                "upload_id": processing_id,
+                "video_id": processing_id,
+                "title": cached_copy.get('title'),
+                "thumbnail": cached_copy.get('thumbnail'),
+                "message": "Processing completed (cached result).",
+                "result_url": f"/api/upload/result/{processing_id}",
+                "cached": True  # Flag to indicate this is from cache
+            }
+        
+        # Generate UNIQUE processing ID for this request (not the YouTube video ID)
+        processing_id = str(uuid.uuid4())
+        
+        print(f"🆔 New processing request - Processing ID: {processing_id}, YouTube ID: {youtube_video_id}")
         
         # Get video information using yt-dlp
         video_info = get_youtube_video_info(str(request.url))

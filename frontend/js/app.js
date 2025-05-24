@@ -245,8 +245,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
         let timeoutId = null;
-        let maxRetries = 40; // Maximum 40 retries (about 2 minutes)
+        let maxRetries = 15; // Reduced from 40 to 15 retries (about 3 minutes with longer intervals)
         let retryCount = 0;
+        let pollInterval = 5000; // Start with 5 second intervals
         
         // Cleanup function to stop polling
         const cleanup = () => {
@@ -266,7 +267,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Stop polling after max retries to prevent infinite loops
                 if (retryCount > maxRetries) {
                     console.log('Max retries reached, stopping status checks');
-                    showError('Processing timed out. Please try again or check your connection.');
+                    showProcessingStatus({
+                        status: 'timeout',
+                        progress: 50,
+                        message: 'Processing is taking longer than expected. Your video may still be processing in the background. Please check back later.',
+                        elapsedTime: formatTime((Date.now() - processingStartTime) / 1000)
+                    });
                     cleanup();
                     return;
                 }
@@ -282,19 +288,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 console.log(`Processing status (attempt ${retryCount}):`, data);
                 
-                // Check if we're getting the generic "Processing status not available" message
-                if (data.message === "Processing status not available." && retryCount > 10) {
-                    console.log('Backend appears to have lost track of this processing job');
-                    showError('Processing appears to have been interrupted. Please try submitting your video again.');
-                    cleanup();
-                    return;
-                }
-                
                 // Calculate elapsed time
                 const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
                 const totalElapsedTimeFormatted = formatTime(totalElapsedTime);
                 
-                // Use real backend data only
+                // Use real backend data
                 const statusData = {
                     ...data,
                     elapsedTime: totalElapsedTimeFormatted,
@@ -322,28 +320,36 @@ document.addEventListener('DOMContentLoaded', function() {
                     cleanup();
                     
                 } else {
-                    // Continue checking status
-                    timeoutId = setTimeout(checkStatus, 3000);
+                    // Increase poll interval after first few checks to reduce server load
+                    if (retryCount > 5) {
+                        pollInterval = 10000; // 10 seconds after 5 attempts
+                    }
+                    if (retryCount > 10) {
+                        pollInterval = 15000; // 15 seconds after 10 attempts
+                    }
+                    
+                    // Continue checking status with longer intervals
+                    timeoutId = setTimeout(checkStatus, pollInterval);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
                 
-                // Handle specific error cases
+                // Handle specific error cases with longer delays
                 if (error.message.includes('502') || error.message.includes('503')) {
                     console.log('Backend is restarting, continuing to check...');
-                    timeoutId = setTimeout(checkStatus, 5000);
+                    timeoutId = setTimeout(checkStatus, 15000); // 15 second delay for server restarts
                 } else if (retryCount > maxRetries) {
                     showError('Unable to check processing status. Please refresh the page and try again.');
                     cleanup();
                 } else {
-                    // Continue checking despite errors
-                    timeoutId = setTimeout(checkStatus, 5000);
+                    // Continue checking despite errors with longer delay
+                    timeoutId = setTimeout(checkStatus, 10000);
                 }
             }
         };
 
-        // Start checking status immediately
-        checkStatus();
+        // Start checking status after a brief delay
+        timeoutId = setTimeout(checkStatus, 2000);
         
         // Return cleanup function so it can be called externally if needed
         return cleanup;
@@ -570,18 +576,35 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(data => {
             console.log('Success:', data);
+            
+            // Check if this is a cached result - redirect immediately
+            if (data.status === 'completed' && data.cached) {
+                showProcessingStatus({
+                    status: 'completed',
+                    progress: 100,
+                    message: 'Found cached result! Redirecting...',
+                    elapsedTime: '0 seconds'
+                });
+                
+                // Redirect immediately for cached results
+                setTimeout(() => {
+                    window.location.href = `/video.html?id=${data.upload_id || data.video_id}`;
+                }, 1000);
+                return;
+            }
+            
             // Check if processing started successfully
             if (data.upload_id || data.video_id) {
                 const videoId = data.upload_id || data.video_id;
                 showProcessingStatus({
                     status: 'processing',
                     progress: 10,
-                    message: 'YouTube video accepted. Starting extraction...',
+                    message: 'YouTube video accepted. Processing in background...',
                     startTime: Date.now()
                 });
                 
-                // Begin tracking the processing status using the upload status endpoint
-                trackProcessing(videoId);
+                // Begin tracking the processing status with simple polling
+                trackProcessingSimple(videoId);
             } else {
                 throw new Error('No video ID in response');
             }
@@ -596,8 +619,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
         let timeoutId = null;
-        let maxRetries = 40; // Maximum 40 retries (about 2 minutes)
+        let maxRetries = 15; // Reduced from 40 to 15 retries (about 3 minutes with longer intervals)
         let retryCount = 0;
+        let pollInterval = 5000; // Start with 5 second intervals
         
         // Cleanup function to stop polling
         const cleanup = () => {
@@ -617,7 +641,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Stop polling after max retries to prevent infinite loops
                 if (retryCount > maxRetries) {
                     console.log('Max retries reached, stopping status checks');
-                    showError('Processing timed out. Please try again or check your connection.');
+                    showProcessingStatus({
+                        status: 'timeout',
+                        progress: 50,
+                        message: 'Processing is taking longer than expected. Your video may still be processing in the background. Please check back later.',
+                        elapsedTime: formatTime((Date.now() - processingStartTime) / 1000)
+                    });
                     cleanup();
                     return;
                 }
@@ -633,19 +662,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 console.log(`Processing status (attempt ${retryCount}):`, data);
                 
-                // Check if we're getting the generic "Processing status not available" message
-                if (data.message === "Processing status not available." && retryCount > 10) {
-                    console.log('Backend appears to have lost track of this processing job');
-                    showError('Processing appears to have been interrupted. Please try submitting your video again.');
-                    cleanup();
-                    return;
-                }
-                
                 // Calculate elapsed time
                 const totalElapsedTime = Math.floor((Date.now() - processingStartTime) / 1000);
                 const totalElapsedTimeFormatted = formatTime(totalElapsedTime);
                 
-                // Use real backend data only
+                // Use real backend data
                 const statusData = {
                     ...data,
                     elapsedTime: totalElapsedTimeFormatted,
@@ -673,30 +694,129 @@ document.addEventListener('DOMContentLoaded', function() {
                     cleanup();
                     
                 } else {
-                    // Continue checking status
-                    timeoutId = setTimeout(checkStatus, 3000);
+                    // Increase poll interval after first few checks to reduce server load
+                    if (retryCount > 5) {
+                        pollInterval = 10000; // 10 seconds after 5 attempts
+                    }
+                    if (retryCount > 10) {
+                        pollInterval = 15000; // 15 seconds after 10 attempts
+                    }
+                    
+                    // Continue checking status with longer intervals
+                    timeoutId = setTimeout(checkStatus, pollInterval);
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
                 
-                // Handle specific error cases
+                // Handle specific error cases with longer delays
                 if (error.message.includes('502') || error.message.includes('503')) {
                     console.log('Backend is restarting, continuing to check...');
-                    timeoutId = setTimeout(checkStatus, 5000);
+                    timeoutId = setTimeout(checkStatus, 15000); // 15 second delay for server restarts
                 } else if (retryCount > maxRetries) {
                     showError('Unable to check processing status. Please refresh the page and try again.');
                     cleanup();
                 } else {
-                    // Continue checking despite errors
-                    timeoutId = setTimeout(checkStatus, 5000);
+                    // Continue checking despite errors with longer delay
+                    timeoutId = setTimeout(checkStatus, 10000);
                 }
             }
         };
 
-        // Start checking status immediately
-        checkStatus();
+        // Start checking status after a brief delay
+        timeoutId = setTimeout(checkStatus, 2000);
         
         // Return cleanup function so it can be called externally if needed
+        return cleanup;
+    }
+
+    function trackProcessingSimple(uploadId) {
+        let checkCount = 0;
+        let maxChecks = 8; // Only check 8 times maximum
+        let timeoutId = null;
+        
+        const cleanup = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+        };
+        
+        window.currentProcessingCleanup = cleanup;
+        
+        const checkStatus = async () => {
+            try {
+                checkCount++;
+                
+                // Stop after max checks - let user manually refresh
+                if (checkCount > maxChecks) {
+                    showProcessingStatus({
+                        status: 'background',
+                        progress: 50,
+                        message: 'Processing continues in background. Please check back in a few minutes or refresh the page.',
+                        elapsedTime: formatTime(checkCount * 10)
+                    });
+                    cleanup();
+                    return;
+                }
+                
+                const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log(`Status check ${checkCount}:`, data);
+                
+                if (data.status === 'completed') {
+                    showProcessingStatus({
+                        status: 'completed',
+                        progress: 100,
+                        message: 'Processing completed! Redirecting...',
+                        elapsedTime: formatTime(checkCount * 10)
+                    });
+                    
+                    cleanup();
+                    setTimeout(() => {
+                        window.location.href = `/video.html?id=${uploadId}`;
+                    }, 2000);
+                    
+                } else if (data.status === 'failed') {
+                    showError(data.message || 'Processing failed');
+                    cleanup();
+                    
+                } else {
+                    // Show simple progress message
+                    showProcessingStatus({
+                        status: 'processing',
+                        progress: Math.min(checkCount * 12, 95), // Gradual progress increase
+                        message: data.message || 'Processing your video in the background...',
+                        elapsedTime: formatTime(checkCount * 10)
+                    });
+                    
+                    // Schedule next check with longer intervals (10 seconds)
+                    timeoutId = setTimeout(checkStatus, 10000);
+                }
+            } catch (error) {
+                console.warn('Status check failed:', error);
+                
+                if (checkCount > maxChecks) {
+                    showProcessingStatus({
+                        status: 'background',
+                        progress: 50,
+                        message: 'Processing continues in background. Please refresh the page in a few minutes.',
+                        elapsedTime: formatTime(checkCount * 10)
+                    });
+                    cleanup();
+                } else {
+                    // Continue with longer delay on error
+                    timeoutId = setTimeout(checkStatus, 15000);
+                }
+            }
+        };
+
+        // Start checking after 5 seconds
+        timeoutId = setTimeout(checkStatus, 5000);
         return cleanup;
     }
 
