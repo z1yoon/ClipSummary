@@ -216,6 +216,78 @@ header {
     border-color: #1346cc;
 }
 
+/* Font Awesome icon fixes */
+.fas, .fa-solid, .fa-regular, .fa-light, .fa-thin, .fa-duotone, .fa-brands {
+    font-family: "Font Awesome 6 Free" !important;
+    font-weight: 900 !important;
+    display: inline-block !important;
+    font-style: normal !important;
+    font-variant: normal !important;
+    text-rendering: auto !important;
+    line-height: 1 !important;
+}
+
+/* Ensure all button icons are visible */
+.btn i {
+    font-size: 18px !important;
+    margin-left: 8px !important;
+    color: inherit !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+}
+
+/* Login button icon styling */
+.login-btn i {
+    font-size: 18px !important;
+    margin-left: 8px !important;
+    color: #C9CED6 !important;
+    display: inline-block !important;
+}
+
+.login-btn:hover i {
+    color: #144EE3 !important;
+}
+
+/* URL input icon */
+.url-input i {
+    font-size: 20px !important;
+    color: var(--text-muted) !important;
+    margin-right: 20px !important;
+    display: inline-block !important;
+}
+
+/* Upload area plus icon */
+.plus-icon i {
+    font-size: 28px !important;
+    color: white !important;
+    display: inline-block !important;
+}
+
+/* Processing status icons */
+.processing-stage i,
+.stage-icon i {
+    font-size: 20px !important;
+    color: inherit !important;
+    display: inline-block !important;
+}
+
+/* Auth form button icons */
+.auth-form .btn i {
+    font-size: 16px !important;
+    margin-left: 8px !important;
+    color: white !important;
+    display: inline-block !important;
+}
+
+/* Make sure icons don't disappear on hover */
+.btn:hover i,
+.btn:focus i,
+.btn:active i {
+    display: inline-block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
 /* Login icon */
 .login-icon {
     display: inline-block !important;

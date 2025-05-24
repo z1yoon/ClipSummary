@@ -110,6 +110,14 @@ def init_database():
 async def startup_event():
     logger.info("Starting ClipSummary API server...")
     
+    # Suppress compatibility warnings
+    import warnings
+    warnings.filterwarnings('ignore', category=UserWarning)
+    warnings.filterwarnings('ignore', category=FutureWarning)
+    warnings.filterwarnings('ignore', message='.*pyannote.audio.*')
+    warnings.filterwarnings('ignore', message='.*torch.*')
+    warnings.filterwarnings('ignore', message='.*TensorFloat-32.*')
+    
     # Initialize database first
     init_database()
     
@@ -161,12 +169,17 @@ async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as e:
-        print(f"Unhandled exception: {str(e)}")
+        logger.error(f"Unhandled exception: {str(e)}")
+        logger.error(f"Request URL: {request.url}")
+        logger.error(f"Request method: {request.method}")
+        
+        # Graceful error response to prevent backend crashes
         return JSONResponse(
             status_code=500,
             content={
                 "status": "error",
-                "message": f"Internal server error: {str(e)}",
+                "message": "Internal server error occurred. Please try again.",
+                "error_code": "BACKEND_ERROR",
                 "endpoint": str(request.url)
             }
         )

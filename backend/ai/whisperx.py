@@ -5,8 +5,16 @@ import time
 import logging
 import gc
 import threading
+import warnings
 from typing import Dict, Any
 from utils.cache import update_processing_status
+
+# Suppress compatibility warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', message='.*pyannote.audio.*')
+warnings.filterwarnings('ignore', message='.*torch.*')
+warnings.filterwarnings('ignore', message='.*TensorFloat-32.*')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,25 +28,25 @@ DEFAULT_COMPUTE_TYPE = "float16"
 # Force CUDA visible devices to ensure GPU is used
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-# Fix cuDNN library issues for RTX 5090
-def fix_cudnn_issues():
-    """Fix cuDNN library path and TF32 issues for RTX 5090"""
+# Fix compatibility issues
+def fix_compatibility_issues():
+    """Fix compatibility issues between different library versions"""
     try:
-        # Enable TF32 for better performance on RTX 5090
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        logger.info("Enabled TF32 for RTX 5090 performance optimization")
+        # Disable TF32 for better reproducibility (addresses pyannote.audio warnings)
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
         
-        # Set cuDNN deterministic mode for stability
+        # Set cuDNN settings for stability
         torch.backends.cudnn.deterministic = False
         torch.backends.cudnn.benchmark = True
-        logger.info("Configured cuDNN for RTX 5090 stability")
+        
+        logger.info("Applied compatibility fixes for library version conflicts")
         
     except Exception as e:
-        logger.warning(f"Could not configure cuDNN settings: {e}")
+        logger.warning(f"Could not apply compatibility fixes: {e}")
 
-# Apply cuDNN fixes
-fix_cudnn_issues()
+# Apply compatibility fixes
+fix_compatibility_issues()
 
 # Verify RTX 5090 CUDA compatibility
 def verify_rtx5090_cuda():
