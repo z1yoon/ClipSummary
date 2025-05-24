@@ -206,8 +206,8 @@ async def process_youtube_video(
                     "languages_requested": request.languages,
                     "summary_length": request.summary_length,
                     "upload_time": time.time(),
-                    "user_id": current_user.get('id'),
-                    "user_name": current_user.get('username'),
+                    "user_id": current_user.id,
+                    "user_name": current_user.username,
                     "is_youtube": True,
                     "cached_result": True
                 }, f)
@@ -256,8 +256,8 @@ async def process_youtube_video(
                 "languages_requested": request.languages,
                 "summary_length": request.summary_length,
                 "upload_time": time.time(),
-                "user_id": current_user.get('id'),
-                "user_name": current_user.get('username'),
+                "user_id": current_user.id,
+                "user_name": current_user.username,
                 "is_youtube": True
             }, f)
         
