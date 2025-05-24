@@ -592,13 +592,27 @@ async def process_uploaded_video(
     user_id: str
 ):
     """Background task to process uploaded video."""
+    # Import at the top to avoid conflicts
+    import traceback
+    import ffmpeg
+    from utils.cache import update_processing_status, cache_result
+    from ai.whisperx import transcribe_audio
+    from ai.summarizer import generate_summary
+    from ai.translator import translate_text
+    from utils.helpers import get_video_metadata, extract_thumbnail
+    
     try:
+        print(f"[{upload_id}] Starting background processing task for {filename}")
+        
         # Check if the source video file exists
         if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
             print(f"[{upload_id}] Source video not found at {video_path}, checking for alternatives")
             
             # Try to find any video file in the upload directory
             upload_dir = f"uploads/{upload_id}"
+            if not os.path.exists(upload_dir):
+                raise Exception(f"Upload directory not found: {upload_dir}")
+                
             video_files = [f for f in os.listdir(upload_dir) if f.endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov'))]
             
             if video_files:
@@ -612,21 +626,8 @@ async def process_uploaded_video(
         file_size = os.path.getsize(video_path)
         print(f"[{upload_id}] Starting processing of {filename} ({file_size/1024/1024:.2f} MB)")
 
-        # Create a reference file instead of symlink or copy for large video files
-        video_stream_path = f"uploads/{upload_id}/video.mp4"
-        original_video_path = video_path
-        
-        # Create a video.path reference file that contains the path to the original
-        # This avoids file copying/linking issues in Docker environments
-        reference_path = f"uploads/{upload_id}/video.path"
-        
-        # Save reference to the original file
-        with open(reference_path, "w") as ref_file:
-            ref_file.write(original_video_path)
-            print(f"[{upload_id}] Created reference to original video at: {original_video_path}")
-        
         # For FFmpeg processing, we'll use the original path directly
-        processing_video_path = original_video_path
+        processing_video_path = video_path
         
         # Update status: starting audio extraction
         update_processing_status(
@@ -637,7 +638,6 @@ async def process_uploaded_video(
         )
         
         # Extract audio from video
-        import ffmpeg
         audio_path = f"uploads/{upload_id}/audio.wav"
         
         try:
@@ -795,8 +795,6 @@ async def process_uploaded_video(
         
         # Extract video thumbnail and metadata
         try:
-            from utils.helpers import get_video_metadata, extract_thumbnail
-            
             print(f"[{upload_id}] Extracting video metadata and thumbnail")
             
             # Get video metadata
@@ -853,15 +851,25 @@ async def process_uploaded_video(
     except Exception as e:
         # Update status to failed
         error_message = str(e)
+        error_traceback = traceback.format_exc()
         print(f"[{upload_id}] Processing failed: {error_message}")
+        print(f"[{upload_id}] Full traceback:\n{error_traceback}")
         
-        update_processing_status(
-            upload_id=upload_id,
-            status="failed",
-            progress=0,
-            message=f"Processing failed: {error_message}"
-        )
+        # Update status to failed - use the cache version to avoid conflicts
+        try:
+            update_processing_status(
+                upload_id=upload_id,
+                status="failed",
+                progress=0,
+                message=error_message,
+                error=error_message
+            )
+        except Exception as status_error:
+            print(f"[{upload_id}] Failed to update status: {str(status_error)}")
         
         # Log the error
-        with open(f"uploads/{upload_id}/error.log", "w") as f:
-            f.write(error_message)
+        try:
+            with open(f"uploads/{upload_id}/error.log", "w") as f:
+                f.write(f"{error_message}\n\nFull traceback:\n{error_traceback}")
+        except Exception as log_error:
+            print(f"[{upload_id}] Failed to write error log: {str(log_error)}")

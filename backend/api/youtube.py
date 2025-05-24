@@ -12,6 +12,7 @@ import shutil
 import random
 import requests
 from urllib.parse import parse_qs, urlparse
+from pathlib import Path
 
 # Change relative imports to absolute imports
 from ai.whisperx import transcribe_audio
@@ -174,12 +175,15 @@ async def process_youtube_video(
         # Generate UNIQUE processing ID for this request (not the YouTube video ID)
         processing_id = str(uuid.uuid4())
         
+        print(f"🆔 New processing request - Processing ID: {processing_id}, YouTube ID: {youtube_video_id}")
+        
         # Generate cache key using YouTube video ID (for caching across requests)
         cache_key = f"youtube:{youtube_video_id}:{','.join(request.languages)}:{request.summary_length}"
         
         # Check if we have cached results
         cached = get_cached_result(cache_key)
         if cached:
+            print(f"💾 Found cached result for YouTube ID: {youtube_video_id}")
             # Return cached results with new processing ID
             cached_copy = cached.copy()
             cached_copy["upload_id"] = processing_id
@@ -209,7 +213,10 @@ async def process_youtube_video(
                 "is_youtube": True
             }, f)
         
+        print(f"📝 Saved video info to uploads/{processing_id}/info.json")
+        
         # Download audio in background using the unique processing ID
+        print(f"⚙️ Adding background task for processing ID: {processing_id}")
         background_tasks.add_task(
             process_youtube_audio,
             processing_id=processing_id,
@@ -234,6 +241,7 @@ async def process_youtube_video(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, 
                            detail=str(e))
     except Exception as e:
+        print(f"💥 Error in process_youtube_video: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
                            detail=f"An unexpected error occurred: {str(e)}")
 
@@ -275,11 +283,18 @@ async def get_processing_status(video_id: str):
 async def process_youtube_audio(processing_id: str, youtube_video_id: str, title: str, url: str, 
                               languages: list[str], summary_length: int, cache_key: str):
     """Background task to process YouTube audio"""
-    from utils.cache import cache_result
-    from api.upload import update_processing_status
+    # Import at the top to avoid conflicts
+    import traceback
+    from utils.cache import cache_result, update_processing_status
+    from ai.whisperx import transcribe_audio
+    from ai.summarizer import generate_summary
+    from ai.translator import translate_text
     
     try:
-        print(f"Starting YouTube processing for processing ID: {processing_id} (YouTube ID: {youtube_video_id})")
+        print(f"🚀 Starting YouTube processing for processing ID: {processing_id} (YouTube ID: {youtube_video_id})")
+        
+        # Create the uploads directory if it doesn't exist
+        os.makedirs(f"uploads/{processing_id}", exist_ok=True)
         audio_path = f"uploads/{processing_id}/audio.wav"
         
         # Initialize status tracking using processing_id
@@ -289,243 +304,62 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             progress=5,
             message="Starting YouTube video download..."
         )
+        
+        print(f"📁 Created directory: uploads/{processing_id}")
+        print(f"🎵 Target audio path: {audio_path}")
+        
+        # Download strategy 1: Direct audio extraction with yt-dlp
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': f'uploads/{processing_id}/%(title)s.%(ext)s',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'wav',
+                'preferredquality': '192',
+            }],
+            'quiet': False,
+            'no_warnings': False,
+            'extractaudio': True,
+            'audioformat': 'wav',
+        }
+        
+        update_processing_status(
+            upload_id=processing_id,
+            status="processing",
+            progress=10,
+            message="Downloading YouTube video audio..."
+        )
+        
+        print(f"🔽 Starting download with yt-dlp for: {url}")
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                # Download and extract audio
+                ydl.download([url])
+                print("✅ yt-dlp download completed")
+                
+                # Find the downloaded audio file
+                upload_dir = Path(f"uploads/{processing_id}")
+                audio_files = list(upload_dir.glob("*.wav"))
+                
+                if audio_files:
+                    downloaded_file = audio_files[0]
+                    # Move to expected location
+                    downloaded_file.rename(audio_path)
+                    print(f"📁 Moved audio file to: {audio_path}")
+                else:
+                    raise Exception("No audio file found after download")
+                    
+            except Exception as e:
+                print(f"❌ yt-dlp strategy failed: {str(e)}")
+                raise Exception(f"Audio download failed: {str(e)}")
+        
+        # Verify the audio file exists and has content
+        if not os.path.exists(audio_path):
+            raise Exception("Audio file was not created")
             
-        # First update yt-dlp to latest version
-        try:
-            subprocess.run(["yt-dlp", "--update"], capture_output=True, check=False)
-            print("yt-dlp has been updated to the latest version")
-        except Exception as e:
-            print(f"Error updating yt-dlp: {e}")
-        
-        download_success = False
-        error_messages = []
-        
-        # Strategy 1: New Enhanced - Try the most reliable approach first with various client types
-        if not download_success:
-            try:
-                print("Strategy 1: Using enhanced reliable approach with multiple client types")
-                update_processing_status(
-                    upload_id=processing_id,
-                    status="processing",
-                    progress=15,
-                    message="Downloading audio from YouTube..."
-                )
-                
-                # Try different client types
-                client_types = ["android", "web", "android,web", "tv_embedded"]
-                
-                for client in client_types:
-                    print(f"Trying with client type: {client}")
-                    cmd = [
-                        "yt-dlp",
-                        "--no-playlist",
-                        "--force-ipv4",
-                        "--no-warnings",
-                        "--geo-bypass", 
-                        "--no-check-certificate",
-                        "--extractor-args", f"youtube:player_client={client}",
-                        "--extractor-retries", "10",
-                        "--fragment-retries", "10",
-                        "--retry-sleep", "2",
-                        "--throttled-rate", "100K",
-                        "-x", "--audio-format", "wav",
-                        "-o", f"uploads/{processing_id}/audio.%(ext)s",
-                        "--user-agent", get_random_user_agent(),
-                    ]
-                    
-                    cmd.append(url)
-                    
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    
-                    if os.path.exists(audio_path) and os.path.getsize(audio_path) > 10000:
-                        download_success = True
-                        print(f"Strategy 1 successful with client: {client}")
-                        break
-                    else:
-                        print(f"Failed with client {client}: {result.stderr}")
-                
-                if not download_success:
-                    error_messages.append(f"Strategy 1 failed with all client types")
-            except Exception as e:
-                error_msg = f"Strategy 1 failed: {str(e)}"
-                error_messages.append(error_msg)
-                print(error_msg)
-        
-        # Strategy 2: Try using a specific format with fallbacks
-        if not download_success:
-            try:
-                print("Strategy 2: Using specific format with fallbacks")
-                update_processing_status(
-                    upload_id=processing_id,
-                    status="processing",
-                    progress=25,
-                    message="Trying alternative download methods..."
-                )
-                
-                # Try different format specifications
-                format_specs = [
-                    "bestaudio[ext=m4a]",
-                    "bestaudio[ext=webm]",
-                    "bestaudio",
-                    "140",
-                    "251",
-                    "250",
-                    "249"
-                ]
-                
-                for fmt in format_specs:
-                    print(f"Trying format: {fmt}")
-                    cmd = [
-                        "yt-dlp",
-                        "-f", fmt,
-                        "--force-ipv4",
-                        "--no-warnings",
-                        "--no-playlist",
-                        "--extractor-args", "youtube:player_client=web", 
-                        "--throttled-rate", "100K",
-                        "-x", "--audio-format", "wav",
-                        "-o", f"uploads/{processing_id}/audio.%(ext)s",
-                        "--user-agent", get_random_user_agent(),
-                    ]
-                    
-                    cmd.append(url)
-                    
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    
-                    if os.path.exists(audio_path) and os.path.getsize(audio_path) > 10000:
-                        download_success = True
-                        print(f"Strategy 2 successful with format {fmt}")
-                        break
-                    print(f"Format {fmt} download failed or file too small")
-            except Exception as e:
-                error_msg = f"Strategy 2 failed: {str(e)}"
-                error_messages.append(error_msg)
-                print(error_msg)
-        
-        # Strategy 3: Try transcript extraction fallback
-        if not download_success:
-            try:
-                print("Strategy 3: Using transcript API as fallback")
-                update_processing_status(
-                    upload_id=processing_id,
-                    status="processing",
-                    progress=30,
-                    message="Audio download failed, trying transcript extraction..."
-                )
-                
-                # Try to install youtube_transcript_api if not already installed
-                try:
-                    import importlib
-                    importlib.import_module('youtube_transcript_api')
-                except ImportError:
-                    print("Installing youtube_transcript_api...")
-                    subprocess.run(["pip", "install", "youtube_transcript_api"], check=False)
-                
-                from youtube_transcript_api import YouTubeTranscriptApi
-                
-                # Extract pure video ID
-                pure_video_id = extract_video_id(url)
-                
-                transcript_list = YouTubeTranscriptApi.get_transcript(pure_video_id)
-                
-                if transcript_list:
-                    print("Successfully retrieved transcript as fallback")
-                    update_processing_status(
-                        upload_id=processing_id,
-                        status="processing",
-                        progress=50,
-                        message="Processing transcript data..."
-                    )
-                    
-                    # Create a transcript structure
-                    mock_transcript = {
-                        "segments": [
-                            {
-                                "start": item["start"],
-                                "end": item["start"] + item.get("duration", 5),
-                                "text": item["text"]
-                            } for item in transcript_list
-                        ],
-                        "language": "en"
-                    }
-                    
-                    # Generate summary from transcript directly
-                    update_processing_status(
-                        upload_id=processing_id,
-                        status="processing",
-                        progress=70,
-                        message="Generating summary from transcript..."
-                    )
-                    
-                    transcript_text = ' '.join([segment['text'] for segment in mock_transcript["segments"]])
-                    summary = generate_summary(transcript_text, max_sentences=summary_length, upload_id=processing_id)
-                    
-                    # Prepare results with the original language (English)
-                    result = {
-                        "video_id": youtube_video_id,
-                        "title": title,
-                        "url": url,
-                        "transcript": mock_transcript,
-                        "summary": {
-                            "en": summary
-                        },
-                        "translations": {},
-                        "source": "transcript_api"
-                    }
-                    
-                    # Translate to requested languages
-                    update_processing_status(
-                        upload_id=processing_id,
-                        status="processing",
-                        progress=80,
-                        message="Translating content..."
-                    )
-                    
-                    for lang in languages:
-                        if lang != "en":  # Skip English as it's already done
-                            print(f"Translating to {lang}")
-                            result["translations"][lang] = {
-                                "summary": translate_text(summary, target_lang=lang, upload_id=processing_id),
-                                "transcript": [
-                                    {
-                                        "start": segment["start"],
-                                        "end": segment["end"],
-                                        "text": translate_text(segment["text"], target_lang=lang, upload_id=processing_id)
-                                    }
-                                    for segment in mock_transcript["segments"]
-                                ]
-                            }
-                    
-                    # Save results
-                    with open(f"uploads/{processing_id}/result.json", 'w') as f:
-                        json.dump(result, f)
-                    
-                    # Cache the result
-                    cache_result(cache_key, result)
-                    
-                    update_processing_status(
-                        upload_id=processing_id,
-                        status="completed",
-                        progress=100,
-                        message="Processing completed successfully."
-                    )
-                    
-                    print(f"YouTube processing completed via transcript API for {processing_id}")
-                    return  # Early return since we're done
-                
-            except Exception as e:
-                error_msg = f"Transcript extraction failed: {str(e)}"
-                error_messages.append(error_msg)
-                print(error_msg)
-        
-        # If all strategies failed, raise exception
-        if not download_success:
-            all_errors = "\n".join(error_messages)
-            raise Exception(f"Failed to download or extract audio/transcript from YouTube video. Errors:\n{all_errors}")
-        
-        # If we reach here, we successfully downloaded the audio
         audio_size = os.path.getsize(audio_path)
-        print(f"Audio file size: {audio_size/1024/1024:.2f} MB")
+        print(f"📊 Audio file size: {audio_size/1024/1024:.2f} MB")
         
         # Check if the audio file is valid
         if audio_size < 10000:  # Less than 10KB is suspicious
@@ -539,13 +373,13 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             message="Audio downloaded successfully. Starting transcription..."
         )
         
-        print(f"Starting transcription for {processing_id}")
+        print(f"🎤 Starting transcription for {processing_id}")
         transcript = transcribe_audio(audio_path, upload_id=processing_id)
         
         if not transcript or "segments" not in transcript or not transcript["segments"]:
             raise Exception("Transcription failed: No transcription segments were generated")
         
-        print(f"Transcription completed with {len(transcript['segments'])} segments")
+        print(f"✅ Transcription completed with {len(transcript['segments'])} segments")
         
         # Generate summary (English)
         update_processing_status(
@@ -558,7 +392,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         summary = generate_summary(' '.join([segment['text'] for segment in transcript['segments']]), 
                                   max_sentences=summary_length, upload_id=processing_id)
         
-        print(f"Summary generated, length: {len(summary)} characters")
+        print(f"📝 Summary generated, length: {len(summary)} characters")
         
         # Prepare results
         result = {
@@ -586,7 +420,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             
             for lang in languages:
                 if lang != "en":  # Skip English as it's already done
-                    print(f"Translating to {lang}")
+                    print(f"🌐 Translating to {lang}")
                     result["translations"][lang] = {
                         "summary": translate_text(summary, target_lang=lang, upload_id=processing_id),
                         "transcript": [
@@ -598,7 +432,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
                             for segment in transcript["segments"]
                         ]
                     }
-                    print(f"Translation to {lang} completed")
+                    print(f"✅ Translation to {lang} completed")
         
         # Save results
         with open(f"uploads/{processing_id}/result.json", 'w') as f:
@@ -614,20 +448,30 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             message="Processing completed successfully."
         )
         
-        print(f"YouTube processing completed successfully for {processing_id}")
+        print(f"🎉 YouTube processing completed successfully for {processing_id}")
         
     except Exception as e:
         error_message = f"Processing failed: {str(e)}"
-        print(f"Error processing YouTube video {processing_id}: {error_message}")
+        error_traceback = traceback.format_exc()
+        print(f"💥 Error processing YouTube video {processing_id}: {error_message}")
+        print(f"💥 Full traceback:\n{error_traceback}")
         
-        # Update status to failed
-        update_processing_status(
-            upload_id=processing_id,
-            status="failed",
-            progress=0,
-            message=error_message
-        )
+        # Update status to failed - use the cache version to avoid conflicts
+        try:
+            from utils.cache import update_processing_status
+            update_processing_status(
+                upload_id=processing_id,
+                status="failed",
+                progress=0,
+                message=error_message,
+                error=error_message
+            )
+        except Exception as status_error:
+            print(f"💥 Failed to update status: {str(status_error)}")
         
         # Log the error
-        with open(f"uploads/{processing_id}/error.log", 'w') as f:
-            f.write(error_message)
+        try:
+            with open(f"uploads/{processing_id}/error.log", 'w') as f:
+                f.write(f"{error_message}\n\nFull traceback:\n{error_traceback}")
+        except Exception as log_error:
+            print(f"💥 Failed to write error log: {str(log_error)}")

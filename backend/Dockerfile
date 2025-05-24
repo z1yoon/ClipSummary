@@ -61,7 +61,8 @@ COPY ./logging.conf ./
 
 # Create necessary directories with proper permissions
 RUN mkdir -p uploads cache .cache/huggingface/hub && \
-    chmod -R 755 uploads cache .cache
+    chmod -R 777 uploads cache .cache && \
+    chown -R root:root uploads cache .cache
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]
