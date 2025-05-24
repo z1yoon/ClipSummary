@@ -665,6 +665,8 @@ async def process_uploaded_video(
                 print(f"[{upload_id}] Found alternative video: {video_path}")
             else:
                 raise Exception(f"No video file found in upload directory: {upload_dir}")
+        else:
+            print(f"[{upload_id}] Source video found: {video_path}")
         
         # Get file size for logging
         file_size = os.path.getsize(video_path)
@@ -917,3 +919,293 @@ async def process_uploaded_video(
                 f.write(f"{error_message}\n\nFull traceback:\n{error_traceback}")
         except Exception as log_error:
             print(f"[{upload_id}] Failed to write error log: {str(log_error)}")
+
+# Chunked upload data models and session storage
+from pydantic import BaseModel
+
+class ChunkedUploadInit(BaseModel):
+    upload_id: str
+    filename: str
+    total_size: int
+    total_chunks: int
+    languages: str = "en"
+    summary_length: int = 3
+
+class ChunkedUploadFinalize(BaseModel):
+    upload_id: str
+
+# In-memory storage for chunked upload sessions
+chunked_uploads = {}
+
+@router.post("/init-chunked")
+async def init_chunked_upload(
+    init_data: ChunkedUploadInit,
+    current_user: dict = Depends(get_current_user)
+):
+    """Initialize a chunked upload session."""
+    try:
+        upload_id = init_data.upload_id
+        
+        # Create upload directory
+        upload_dir = f"uploads/{upload_id}"
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # Create chunks directory
+        chunks_dir = f"{upload_dir}/chunks"
+        os.makedirs(chunks_dir, exist_ok=True)
+        
+        # Store session info
+        chunked_uploads[upload_id] = {
+            "filename": init_data.filename,
+            "total_size": init_data.total_size,
+            "total_chunks": init_data.total_chunks,
+            "languages": init_data.languages,
+            "summary_length": init_data.summary_length,
+            "user_id": current_user.id,
+            "chunks_received": set(),
+            "created_at": time.time()
+        }
+        
+        print(f"Initialized chunked upload {upload_id}: {init_data.filename} ({init_data.total_size} bytes, {init_data.total_chunks} chunks)")
+        
+        return {
+            "success": True,
+            "upload_id": upload_id,
+            "message": "Chunked upload session initialized"
+        }
+        
+    except Exception as e:
+        print(f"Error initializing chunked upload: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initialize chunked upload: {str(e)}"
+        )
+
+@router.post("/chunk")
+async def upload_chunk(
+    chunk: UploadFile = File(...),
+    chunk_index: int = Form(...),
+    upload_id: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Upload a single chunk of a file."""
+    try:
+        # Verify session exists
+        if upload_id not in chunked_uploads:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upload session not found or expired"
+            )
+        
+        session = chunked_uploads[upload_id]
+        
+        # Verify user owns this upload
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+        
+        # Save chunk
+        chunk_path = f"uploads/{upload_id}/chunks/chunk_{chunk_index:06d}"
+        
+        with open(chunk_path, "wb") as f:
+            content = await chunk.read()
+            f.write(content)
+        
+        # Mark chunk as received
+        session["chunks_received"].add(chunk_index)
+        
+        print(f"Received chunk {chunk_index} for upload {upload_id} ({len(content)} bytes)")
+        
+        return {
+            "success": True,
+            "chunk_index": chunk_index,
+            "upload_id": upload_id,
+            "chunks_received": len(session["chunks_received"]),
+            "total_chunks": session["total_chunks"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error uploading chunk: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload chunk: {str(e)}"
+        )
+
+@router.post("/finalize-chunked")
+async def finalize_chunked_upload(
+    finalize_data: ChunkedUploadFinalize,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user)
+):
+    """Finalize a chunked upload by combining all chunks."""
+    try:
+        upload_id = finalize_data.upload_id
+        
+        # Verify session exists
+        if upload_id not in chunked_uploads:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upload session not found or expired"
+            )
+        
+        session = chunked_uploads[upload_id]
+        
+        # Verify user owns this upload
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+        
+        # Verify all chunks received
+        expected_chunks = set(range(session["total_chunks"]))
+        if session["chunks_received"] != expected_chunks:
+            missing_chunks = expected_chunks - session["chunks_received"]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Missing chunks: {sorted(missing_chunks)}"
+            )
+        
+        print(f"Finalizing chunked upload {upload_id}: combining {session['total_chunks']} chunks")
+        
+        # Combine chunks into final file
+        chunks_dir = f"uploads/{upload_id}/chunks"
+        final_path = f"uploads/{upload_id}/{session['filename']}"
+        
+        with open(final_path, "wb") as final_file:
+            for chunk_index in range(session["total_chunks"]):
+                chunk_path = f"{chunks_dir}/chunk_{chunk_index:06d}"
+                
+                if os.path.exists(chunk_path):
+                    with open(chunk_path, "rb") as chunk_file:
+                        final_file.write(chunk_file.read())
+                else:
+                    raise Exception(f"Chunk {chunk_index} not found")
+        
+        # Verify final file size
+        final_size = os.path.getsize(final_path)
+        if final_size != session["total_size"]:
+            raise Exception(f"File size mismatch: expected {session['total_size']}, got {final_size}")
+        
+        print(f"Successfully combined chunks for {upload_id}: {final_size} bytes")
+        
+        # Clean up chunks directory
+        try:
+            shutil.rmtree(chunks_dir)
+        except Exception as e:
+            print(f"Warning: Failed to clean up chunks directory: {str(e)}")
+        
+        # Extract metadata and thumbnail immediately
+        video_info = {
+            "filename": session["filename"],
+            "upload_time": time.time(),
+            "languages_requested": session["languages"].split(","),
+            "summary_length": session["summary_length"],
+            "user_id": current_user.id,
+            "user_name": current_user.username,
+            "processing_state": "metadata_only",
+        }
+        
+        # Extract basic metadata and thumbnail
+        try:
+            from utils.helpers import get_video_metadata, extract_thumbnail
+            
+            metadata = get_video_metadata(final_path)
+            
+            thumbnail_path = f"uploads/{upload_id}/thumbnail.jpg"
+            extract_thumbnail(final_path, thumbnail_path)
+            
+            video_info.update({
+                "thumbnail": f"/uploads/{upload_id}/thumbnail.jpg",
+                "duration": metadata.get("duration", 0),
+                "title": session["filename"],
+                "metadata": metadata
+            })
+        except Exception as e:
+            print(f"Error extracting initial metadata: {str(e)}")
+        
+        # Save to database
+        try:
+            conn = sqlite3.connect("clipsummary.db")
+            cursor = conn.cursor()
+            video_id = str(uuid.uuid4())
+            cursor.execute(
+                """INSERT INTO videos (id, user_id, title, filename, upload_id, status, is_youtube) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (video_id, current_user.id, session["filename"], session["filename"], upload_id, "metadata_ready", False)
+            )
+            conn.commit()
+            conn.close()
+            video_info["video_id"] = video_id
+        except Exception as e:
+            print(f"Error saving to database: {str(e)}")
+        
+        # Save video info
+        with open(f"uploads/{upload_id}/info.json", "w") as f:
+            json.dump(video_info, f)
+        
+        # Cache metadata
+        cache_result(f"video:{upload_id}:info", video_info)
+        
+        # Create video.mp4 symlink/hardlink for streaming
+        video_stream_path = f"uploads/{upload_id}/video.mp4"
+        try:
+            if os.path.exists(video_stream_path):
+                os.unlink(video_stream_path)
+            
+            # Use hard link for efficiency
+            os.link(final_path, video_stream_path)
+            print(f"Created hard link for streaming: {video_stream_path}")
+        except Exception as e:
+            # Fall back to copy if hard link fails
+            try:
+                shutil.copy(final_path, video_stream_path)
+                print(f"Created copy for streaming: {video_stream_path}")
+            except Exception as copy_error:
+                print(f"Warning: Failed to create streaming file: {str(copy_error)}")
+        
+        # Set initial status
+        update_processing_status(
+            upload_id=upload_id,
+            status="metadata_ready",
+            progress=5,
+            message="Chunked upload completed. Video ready for viewing."
+        )
+        
+        # Schedule background processing
+        background_tasks.add_task(
+            process_uploaded_video,
+            video_path=final_path,
+            upload_id=upload_id,
+            filename=session["filename"],
+            languages=session["languages"].split(","),
+            summary_length=session["summary_length"],
+            user_id=current_user.id
+        )
+        
+        # Clean up session
+        del chunked_uploads[upload_id]
+        
+        print(f"Chunked upload {upload_id} finalized and processing scheduled")
+        
+        return {
+            "success": True,
+            "upload_id": upload_id,
+            "filename": session["filename"],
+            "size": final_size,
+            "metadata": video_info,
+            "message": "Upload completed successfully. Processing started in background."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error finalizing chunked upload: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to finalize upload: {str(e)}"
+        )

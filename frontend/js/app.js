@@ -152,94 +152,135 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('languages', 'en');
-        formData.append('summary_length', '3');
+        // Use chunked upload for better performance
+        uploadVideoFileChunked(file);
+    }
 
+    async function uploadVideoFileChunked(file) {
+        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks for optimal performance
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const uploadId = generateUploadId();
+        
         showProcessingStatus({
             status: 'uploading',
             progress: 0,
-            message: `Uploading ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`
+            message: `Starting chunked upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`
         });
 
-        // Upload with progress tracking
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/upload/video', true);
-        
-        // Add auth header
-        const token = localStorage.getItem('access_token');
-        const type = localStorage.getItem('token_type');
-        xhr.setRequestHeader('Authorization', `${type} ${token}`);
+        try {
+            // First, initialize the upload session
+            const initResponse = await fetch('/api/upload/init-chunked', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                },
+                body: JSON.stringify({
+                    upload_id: uploadId,
+                    filename: file.name,
+                    total_size: file.size,
+                    total_chunks: totalChunks,
+                    languages: 'en',
+                    summary_length: 3
+                })
+            });
 
-        xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-                const percentComplete = (e.loaded / e.total) * 100;
+            if (!initResponse.ok) {
+                throw new Error(`Failed to initialize upload: ${initResponse.status}`);
+            }
+
+            // Upload chunks in parallel for maximum speed
+            const maxConcurrent = 3; // Upload 3 chunks simultaneously
+            const uploadPromises = [];
+            let completedChunks = 0;
+
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += maxConcurrent) {
+                const batch = [];
+                
+                for (let i = 0; i < maxConcurrent && (chunkIndex + i) < totalChunks; i++) {
+                    const currentChunk = chunkIndex + i;
+                    batch.push(uploadChunk(file, currentChunk, CHUNK_SIZE, uploadId, totalChunks));
+                }
+
+                // Wait for this batch to complete
+                const batchResults = await Promise.all(batch);
+                completedChunks += batchResults.length;
+
+                // Update progress
+                const progress = Math.round((completedChunks / totalChunks) * 90); // Reserve 10% for finalization
                 showProcessingStatus({
                     status: 'uploading',
-                    progress: percentComplete,
-                    message: `Uploading: ${percentComplete.toFixed(1)}% complete...`
+                    progress: progress,
+                    message: `Uploading chunks: ${completedChunks}/${totalChunks} complete (${progress}%)`
                 });
             }
-        };
 
-        xhr.onload = function() {
-            if (xhr.status === 200 || xhr.status === 202) {
-                try {
-                    const response = JSON.parse(xhr.responseText);
-                    console.log('Upload response:', response);
-                    
-                    if (response.upload_id) {
-                        showProcessingStatus({
-                            status: 'processing',
-                            progress: 15, 
-                            message: 'Upload complete. Starting video processing...'
-                        });
-                        
-                        // Update backend status to mark upload as complete
-                        fetch('/api/upload/status/update', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
-                            },
-                            body: JSON.stringify({
-                                upload_id: response.upload_id,
-                                status: 'processing',
-                                progress: 15,
-                                message: 'Upload complete. Starting video processing...'
-                            })
-                        }).catch(err => console.warn('Failed to update upload status:', err));
-                        
-                        trackProcessing(response.upload_id);
-                    } else {
-                        showError('Upload failed: No upload ID in response');
-                        hideLoading();
-                    }
-                } catch (error) {
-                    console.error('Error parsing response:', error);
-                    showError('Failed to parse server response');
-                    hideLoading();
-                }
-            } else {
-                console.error('Upload failed with status:', xhr.status);
-                try {
-                    const errorResponse = JSON.parse(xhr.responseText);
-                    showError(`Upload failed: ${errorResponse.detail || 'Unknown error'}`);
-                } catch (e) {
-                    showError(`Upload failed with status ${xhr.status}`);
-                }
-                hideLoading();
+            // Finalize the upload
+            showProcessingStatus({
+                status: 'uploading',
+                progress: 95,
+                message: 'Finalizing upload and starting processing...'
+            });
+
+            const finalizeResponse = await fetch('/api/upload/finalize-chunked', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                },
+                body: JSON.stringify({
+                    upload_id: uploadId
+                })
+            });
+
+            if (!finalizeResponse.ok) {
+                throw new Error(`Failed to finalize upload: ${finalizeResponse.status}`);
             }
-        };
 
-        xhr.onerror = function() {
-            console.error('Network error during upload');
-            showError('Upload failed. Please check your connection and try again.');
-            hideLoading();
-        };
+            const response = await finalizeResponse.json();
+            
+            showProcessingStatus({
+                status: 'processing',
+                progress: 100,
+                message: 'Upload complete! Starting video processing...'
+            });
 
-        xhr.send(formData);
+            // Start tracking processing
+            trackProcessing(response.upload_id || uploadId);
+
+        } catch (error) {
+            console.error('Chunked upload failed:', error);
+            showError(`Upload failed: ${error.message}`);
+        }
+    }
+
+    async function uploadChunk(file, chunkIndex, chunkSize, uploadId, totalChunks) {
+        const start = chunkIndex * chunkSize;
+        const end = Math.min(start + chunkSize, file.size);
+        const chunk = file.slice(start, end);
+
+        const formData = new FormData();
+        formData.append('chunk', chunk);
+        formData.append('chunk_index', chunkIndex.toString());
+        formData.append('upload_id', uploadId);
+
+        const response = await fetch('/api/upload/chunk', {
+            method: 'POST',
+            headers: {
+                'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+            },
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to upload chunk ${chunkIndex}: ${response.status}`);
+        }
+
+        return chunkIndex;
+    }
+
+    function generateUploadId() {
+        return 'upload_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     }
 
     function trackProcessing(uploadId) {
