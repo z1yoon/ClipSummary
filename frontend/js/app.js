@@ -157,14 +157,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function uploadVideoFileChunked(file) {
-        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks for optimal performance
+        // Optimize chunk size based on file size for better performance
+        let CHUNK_SIZE;
+        if (file.size > 5 * 1024 * 1024 * 1024) {        // Files > 5GB
+            CHUNK_SIZE = 50 * 1024 * 1024;                // 50MB chunks (much larger!)
+        } else if (file.size > 2 * 1024 * 1024 * 1024) { // Files > 2GB  
+            CHUNK_SIZE = 25 * 1024 * 1024;                // 25MB chunks
+        } else if (file.size > 500 * 1024 * 1024) {      // Files > 500MB
+            CHUNK_SIZE = 10 * 1024 * 1024;                // 10MB chunks
+        } else {
+            CHUNK_SIZE = 5 * 1024 * 1024;                 // 5MB chunks for smaller files
+        }
+        
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         const uploadId = generateUploadId();
+        
+        console.log(`File size: ${(file.size / (1024 * 1024 * 1024)).toFixed(2)}GB, Chunk size: ${(CHUNK_SIZE / (1024 * 1024))}MB, Total chunks: ${totalChunks}`);
         
         showProcessingStatus({
             status: 'uploading',
             progress: 0,
-            message: `Starting chunked upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`
+            message: `Starting chunked upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB) - ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024))}MB each`
         });
 
         try {
