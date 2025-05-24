@@ -190,19 +190,58 @@ async def upload_video(
             # Save the uploaded file in chunks to avoid memory issues with large files
             file_path = f"{upload_dir}/{file.filename}"
             
-            # Write file in chunks to handle large files
-            with open(file_path, "wb") as buffer:
-                # Use a larger chunk size for better performance with large files
-                chunk_size = 10 * 1024 * 1024  # 10MB chunks for better performance
+            # Optimize chunk size based on file size for better performance
+            file_size = 0
+            if hasattr(file, 'size') and file.size:
+                file_size = file.size
+            
+            # Use much larger chunks for very large files to reduce overhead
+            if file_size > 5 * 1024 * 1024 * 1024:  # Files > 5GB
+                chunk_size = 100 * 1024 * 1024  # 100MB chunks for very large files
+            elif file_size > 2 * 1024 * 1024 * 1024:  # Files > 2GB
+                chunk_size = 75 * 1024 * 1024   # 75MB chunks for large files
+            elif file_size > 1024 * 1024 * 1024:  # Files > 1GB
+                chunk_size = 50 * 1024 * 1024   # 50MB chunks for large files
+            elif file_size > 100 * 1024 * 1024:  # Files > 100MB
+                chunk_size = 20 * 1024 * 1024   # 20MB chunks for medium files
+            else:
+                chunk_size = 10 * 1024 * 1024   # 10MB chunks for smaller files
+            
+            print(f"Using chunk size: {chunk_size / (1024*1024):.1f}MB for file size: {file_size / (1024*1024):.1f}MB")
+            
+            # Write file using optimized streaming approach with buffering
+            import io
+            buffer_size = chunk_size * 2  # Double buffering for better performance
+            
+            with open(file_path, "wb", buffering=buffer_size) as buffer:
+                total_written = 0
+                chunks_written = 0
+                
                 while True:
                     try:
                         chunk = await file.read(chunk_size)
                         if not chunk:
                             break
                         buffer.write(chunk)
-                        # Ensure chunks are flushed to disk regularly
-                        buffer.flush()
-                        os.fsync(buffer.fileno())
+                        total_written += len(chunk)
+                        chunks_written += 1
+                        
+                        # Flush less frequently for large files to reduce I/O overhead
+                        flush_interval = 10 if file_size > 2 * 1024 * 1024 * 1024 else 5
+                        if chunks_written % flush_interval == 0:
+                            buffer.flush()
+                            
+                        # Only sync to disk every 500MB for very large files
+                        if total_written % (500 * 1024 * 1024) == 0:
+                            import os
+                            os.fsync(buffer.fileno())
+                            
+                        # Log progress less frequently for large files
+                        log_interval = 200 * 1024 * 1024 if file_size > 2 * 1024 * 1024 * 1024 else 50 * 1024 * 1024
+                        if file_size > 0 and total_written % log_interval == 0:
+                            progress = (total_written / file_size) * 100
+                            print(f"Upload progress: {progress:.1f}% ({total_written/(1024*1024):.1f}MB)")
+                        
                     except Exception as chunk_error:
                         print(f"Error processing chunk: {str(chunk_error)}")
                         # Clean up partial file
@@ -213,8 +252,13 @@ async def upload_video(
                             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail=f"Error during file upload: {str(chunk_error)}"
                         )
+                
+                # Final flush and sync
+                buffer.flush()
+                os.fsync(buffer.fileno())
             
-            print(f"File saved to {file_path}, file size: {os.path.getsize(file_path)} bytes")
+            actual_size = os.path.getsize(file_path)
+            print(f"File saved to {file_path}, actual size: {actual_size} bytes ({actual_size/(1024*1024):.1f}MB)")
         except Exception as e:
             print(f"Error saving file: {str(e)}")
             raise HTTPException(

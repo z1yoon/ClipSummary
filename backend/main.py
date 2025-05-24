@@ -80,7 +80,9 @@ app = FastAPI(
     title="ClipSummary API",
     description="API for video transcription, summarization, and translation",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # Optimize for large file uploads
+    max_request_size=10*1024*1024*1024,  # 10GB max request size
 )
 
 # Add CORS middleware

@@ -5,7 +5,7 @@ import os
 import json
 import time
 from utils.helpers import get_video_metadata
-from ai.translator import translate_text
+from ai.translator import translate_text, translate_summary, translate_subtitle_segments, get_supported_languages
 from utils.cache import get_cached_result, cache_result
 from api.auth import get_current_user
 
@@ -480,8 +480,6 @@ async def generate_all_subtitles(
 ):
     """Generate subtitles in all supported languages or specified languages"""
     try:
-        from ai.multilingual import generate_multilingual_subtitles, SUPPORTED_LANGUAGES
-        
         # Parse request body if provided
         if request:
             languages = request.get('languages', None)
@@ -525,10 +523,10 @@ async def generate_all_subtitles(
         
         # Determine which languages to generate
         if languages is None:
-            target_languages = list(SUPPORTED_LANGUAGES.keys())
+            target_languages = list(get_supported_languages().keys())
         else:
             # Validate requested languages
-            invalid_languages = [lang for lang in languages if lang not in SUPPORTED_LANGUAGES]
+            invalid_languages = [lang for lang in languages if lang not in get_supported_languages()]
             if invalid_languages:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -537,21 +535,34 @@ async def generate_all_subtitles(
             target_languages = languages
         
         # Generate subtitles
-        subtitle_results = await generate_multilingual_subtitles(
-            video_id=video_id,
-            original_segments=original_segments,
-            source_language="en"
-        )
+        subtitle_results = {}
+        for lang in target_languages:
+            translated_segments = []
+            for segment in original_segments:
+                translated_text = await translate_text(segment["text"], lang)
+                translated_segments.append({
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "text": translated_text
+                })
+            
+            subtitle_results[lang] = {
+                "segments": translated_segments,
+                "language": lang
+            }
         
-        # Filter results to only requested languages if specified
-        if languages is not None:
-            subtitle_results = {lang: data for lang, data in subtitle_results.items() if lang in languages}
+        # Save generated subtitles
+        for lang, data in subtitle_results.items():
+            subtitle_path = f"uploads/{video_id}/subtitles/{lang}.json"
+            os.makedirs(os.path.dirname(subtitle_path), exist_ok=True)
+            with open(subtitle_path, "w") as f:
+                json.dump(data, f, ensure_ascii=False)
         
         return {
             "video_id": video_id,
             "generated_languages": list(subtitle_results.keys()),
             "total_generated": len(subtitle_results),
-            "supported_languages": SUPPORTED_LANGUAGES,
+            "supported_languages": get_supported_languages(),
             "status": "completed"
         }
         
@@ -570,10 +581,27 @@ async def get_subtitle_statistics(
 ):
     """Get statistics about available subtitles for a video"""
     try:
-        from ai.multilingual import get_subtitle_stats
+        # Get available subtitle languages directly instead of using multilingual.py
+        subtitles_dir = f"uploads/{video_id}/subtitles"
+        available_languages = []
         
-        stats = get_subtitle_stats(video_id)
-        return stats
+        if os.path.exists(subtitles_dir):
+            try:
+                for file in os.listdir(subtitles_dir):
+                    if file.endswith('.json'):
+                        lang_code = file.replace('.json', '')
+                        if lang_code in get_supported_languages():
+                            available_languages.append(lang_code)
+            except Exception as e:
+                print(f"Error reading subtitles directory: {e}")
+        
+        return {
+            "video_id": video_id,
+            "available_languages": sorted(available_languages),
+            "total_languages": len(available_languages),
+            "supported_languages": get_supported_languages(),
+            "missing_languages": [lang for lang in get_supported_languages().keys() if lang not in available_languages]
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -589,8 +617,6 @@ async def translate_video_content(
 ):
     """Translate both summary and subtitles to target language (Chinese or Korean)"""
     try:
-        from ai.translator import translate_summary, translate_subtitle_segments, get_supported_languages
-        
         # Validate target language
         supported_langs = get_supported_languages()
         if target_language not in supported_langs:
@@ -685,8 +711,6 @@ async def get_available_translations(
 ):
     """Get list of available translations for a video"""
     try:
-        from ai.translator import get_supported_languages
-        
         result_path = f"uploads/{video_id}/result.json"
         if not os.path.exists(result_path):
             raise HTTPException(
