@@ -30,7 +30,7 @@ scikit-learn>=1.1.0
 
 # AI and ML dependencies - Fixed for RTX 5090 + WhisperX 3.3.4 compatibility
 whisperx==3.3.4
-ctranslate2>=4.5.0,<5.0.0
+ctranslate2<4.5.0
 faster-whisper>=1.1.1
 nltk>=3.9.1
 onnxruntime-gpu>=1.19.0
