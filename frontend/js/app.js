@@ -59,6 +59,149 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update UI based on authentication status
     updateAuthUI();
 
+    // Check for ongoing uploads when page loads
+    checkForOngoingUploads();
+
+    // Function to check for ongoing uploads in localStorage
+    function checkForOngoingUploads() {
+        if (!isAuthenticated()) return;
+
+        // Look for any upload progress in localStorage
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('upload_progress_')) {
+                try {
+                    const progressData = JSON.parse(localStorage.getItem(key));
+                    const uploadId = progressData.uploadId;
+                    
+                    // Only restore uploads that are not completed
+                    if (progressData.status === 'uploading' || progressData.status === 'finalizing' || progressData.status === 'processing') {
+                        console.log(`Found ongoing upload: ${uploadId}`, progressData);
+                        
+                        if (progressData.status === 'uploading') {
+                            // Show upload progress
+                            const uploadProgress = Math.round((progressData.completedChunks / progressData.totalChunks) * 90);
+                            showProcessingStatus({
+                                status: 'uploading',
+                                progress: uploadProgress,
+                                message: `Resuming upload: ${progressData.completedChunks}/${progressData.totalChunks} chunks complete (${uploadProgress}%)`
+                            });
+                            
+                            // Note: We can't actually resume chunk uploads, but we can check the backend status
+                            setTimeout(() => checkBackendStatus(uploadId), 2000);
+                        } else if (progressData.status === 'processing') {
+                            // Resume processing tracking
+                            showProcessingStatus({
+                                status: 'processing',
+                                progress: 15,
+                                message: 'Resuming video processing tracking...'
+                            });
+                            
+                            trackProcessing(uploadId);
+                        }
+                    } else if (progressData.status === 'completed') {
+                        // Clean up completed uploads after 24 hours
+                        const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+                        if (progressData.startTime < oneDayAgo) {
+                            localStorage.removeItem(key);
+                        }
+                    } else if (progressData.status === 'failed') {
+                        // Show failed upload notification
+                        showError(`Previous upload failed: ${progressData.filename} - ${progressData.error || 'Unknown error'}`);
+                        
+                        // Clean up failed uploads after showing the error
+                        setTimeout(() => {
+                            localStorage.removeItem(key);
+                        }, 10000);
+                    }
+                } catch (error) {
+                    console.error('Error parsing upload progress:', error);
+                    // Remove corrupted data
+                    localStorage.removeItem(key);
+                }
+            }
+        }
+    }
+
+    // Function to check backend status for resumed uploads
+    async function checkBackendStatus(uploadId) {
+        try {
+            const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
+            if (response.ok) {
+                const data = await response.json();
+                
+                if (data.status === 'completed') {
+                    showProcessingStatus({
+                        status: 'completed',
+                        progress: 100,
+                        message: 'Upload and processing completed while you were away!'
+                    });
+                    
+                    // Clean up localStorage
+                    localStorage.removeItem(`upload_progress_${uploadId}`);
+                    
+                    // Offer to redirect to video
+                    setTimeout(() => {
+                        if (confirm('Your video processing completed! Would you like to view it now?')) {
+                            window.location.href = `/video.html?id=${uploadId}`;
+                        }
+                    }, 2000);
+                    
+                } else if (data.status === 'processing') {
+                    // Resume processing tracking
+                    trackProcessing(uploadId);
+                    
+                } else if (data.status === 'failed') {
+                    showError(`Upload failed: ${data.message || 'Unknown error'}`);
+                    localStorage.removeItem(`upload_progress_${uploadId}`);
+                    
+                } else {
+                    // Upload might still be in progress on backend
+                    showProcessingStatus({
+                        status: 'processing',
+                        progress: 10,
+                        message: 'Upload in progress on server...'
+                    });
+                    
+                    // Track the processing
+                    trackProcessing(uploadId);
+                }
+            } else {
+                // Upload might not exist anymore
+                console.log(`Upload ${uploadId} not found on server, cleaning up`);
+                localStorage.removeItem(`upload_progress_${uploadId}`);
+            }
+        } catch (error) {
+            console.error('Error checking backend status:', error);
+            // Continue tracking in case it's a temporary network issue
+            trackProcessing(uploadId);
+        }
+    }
+
+    // Function to clean up old upload progress data
+    function cleanupOldUploads() {
+        const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+        
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('upload_progress_')) {
+                try {
+                    const progressData = JSON.parse(localStorage.getItem(key));
+                    if (progressData.startTime && progressData.startTime < oneDayAgo) {
+                        localStorage.removeItem(key);
+                        console.log(`Cleaned up old upload progress: ${key}`);
+                    }
+                } catch (error) {
+                    // Remove corrupted data
+                    localStorage.removeItem(key);
+                }
+            }
+        }
+    }
+
+    // Clean up old uploads on page load
+    cleanupOldUploads();
+
     // URL input field cursor effect
     const urlInput = document.querySelector('.url-input input');
     const cursor = document.querySelector('.cursor');
@@ -202,8 +345,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(`Failed to initialize upload: ${initResponse.status}`);
             }
 
-            // Upload chunks in parallel for maximum speed
-            const maxConcurrent = 3; // Upload 3 chunks simultaneously
+            // Store upload progress in localStorage for persistence
+            const uploadProgress = {
+                uploadId: uploadId,
+                filename: file.name,
+                totalSize: file.size,
+                totalChunks: totalChunks,
+                completedChunks: 0,
+                status: 'uploading',
+                startTime: Date.now()
+            };
+            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
+
+            // Upload chunks in parallel for maximum speed - INCREASED FROM 3 TO 5!
+            const maxConcurrent = 5; // Upload 5 chunks simultaneously for faster uploads
             const uploadPromises = [];
             let completedChunks = 0;
 
@@ -219,14 +374,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 const batchResults = await Promise.all(batch);
                 completedChunks += batchResults.length;
 
+                // Update progress in localStorage and UI
+                uploadProgress.completedChunks = completedChunks;
+                localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
+
                 // Update progress
                 const progress = Math.round((completedChunks / totalChunks) * 90); // Reserve 10% for finalization
                 showProcessingStatus({
                     status: 'uploading',
                     progress: progress,
-                    message: `Uploading chunks: ${completedChunks}/${totalChunks} complete (${progress}%)`
+                    message: `Uploading chunks: ${completedChunks}/${totalChunks} complete (${progress}%) - 5 parallel uploads`
                 });
             }
+
+            // Update progress for finalization
+            uploadProgress.status = 'finalizing';
+            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
 
             // Finalize the upload
             showProcessingStatus({
@@ -252,6 +415,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const response = await finalizeResponse.json();
             
+            // Update progress - upload complete
+            uploadProgress.status = 'processing';
+            uploadProgress.completedChunks = totalChunks;
+            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
+            
             showProcessingStatus({
                 status: 'processing',
                 progress: 100,
@@ -263,6 +431,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
         } catch (error) {
             console.error('Chunked upload failed:', error);
+            
+            // Update progress - upload failed
+            const uploadProgress = JSON.parse(localStorage.getItem(`upload_progress_${uploadId}`) || '{}');
+            uploadProgress.status = 'failed';
+            uploadProgress.error = error.message;
+            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
+            
             showError(`Upload failed: ${error.message}`);
         }
     }
@@ -277,16 +452,29 @@ document.addEventListener('DOMContentLoaded', function() {
         formData.append('chunk_index', chunkIndex.toString());
         formData.append('upload_id', uploadId);
 
+        // Get fresh auth token for each chunk upload
+        const token = localStorage.getItem('access_token');
+        const tokenType = localStorage.getItem('token_type');
+
+        if (!token || !tokenType) {
+            throw new Error('Authentication required. Please login again.');
+        }
+
         const response = await fetch('/api/upload/chunk', {
             method: 'POST',
             headers: {
-                'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                'Authorization': `${tokenType} ${token}`
             },
             body: formData
         });
 
+        if (response.status === 401) {
+            throw new Error('Authentication expired. Please login again.');
+        }
+
         if (!response.ok) {
-            throw new Error(`Failed to upload chunk ${chunkIndex}: ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`Failed to upload chunk ${chunkIndex}: ${response.status} - ${errorText}`);
         }
 
         return chunkIndex;
