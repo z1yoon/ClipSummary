@@ -233,7 +233,7 @@
                             // Instead, show thumbnail and indicate it's a YouTube video
                             processingOverlay.innerHTML = `
                                 <div class="youtube-placeholder">
-                                    <img src="${videoData.thumbnail || '/images/default-thumbnail.jpg'}" alt="Video thumbnail" style="max-width: 300px; border-radius: 8px;">
+                                    <img src="${videoData.thumbnail || '/images/favicons/favicon.svg'}" alt="Video thumbnail" style="max-width: 300px; border-radius: 8px;">
                                     <h3 style="margin: 16px 0; color: white;">${videoData.title}</h3>
                                     <p style="color: #888;">YouTube video processed successfully</p>
                                     <a href="${videoData.url}" target="_blank" class="btn btn-primary" style="margin-top: 16px;">
@@ -320,12 +320,13 @@
                 currentLanguageName.textContent = LANGUAGE_DATA[currentSubtitleLanguage]?.name || currentSubtitleLanguage;
             }
             
-            // Load subtitles for selected language
+            // Load subtitles for selected language and update summary
             async function loadSubtitles(language) {
                 try {
                     if (subtitles[language]) {
                         // Already loaded
                         subtitleSegments = subtitles[language].segments;
+                        await loadSummary(language); // Load summary for this language
                         return;
                     }
                     
@@ -344,6 +345,9 @@
                     
                     // Render transcript
                     renderTranscript(subtitleSegments);
+                    
+                    // Load summary for this language
+                    await loadSummary(language);
                     
                 } catch (error) {
                     console.error('Error loading subtitles:', error);
@@ -567,10 +571,21 @@
                         showNotification(`Translation to ${result.language_name || targetLanguage} already exists`, 'info');
                     } else {
                         showNotification(`Successfully translated to ${result.language_name || targetLanguage}!`, 'success');
-                        
-                        // Reload video data to update available languages
-                        await loadVideoData();
                     }
+                    
+                    // Reload video data to update available languages and other information
+                    await loadVideoData();
+                    
+                    // Add new language to dropdown if not already there
+                    if (!videoData.available_languages.includes(targetLanguage)) {
+                        videoData.available_languages.push(targetLanguage);
+                        populateLanguageDropdown(videoData.available_languages);
+                    }
+                    
+                    // Switch to the newly translated language
+                    currentSubtitleLanguage = targetLanguage;
+                    updateCurrentLanguageDisplay();
+                    await loadSubtitles(targetLanguage);
                     
                 } catch (error) {
                     console.error('Translation error:', error);

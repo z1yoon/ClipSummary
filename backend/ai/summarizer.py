@@ -134,8 +134,8 @@ def generate_summary(text: str, max_sentences: int = 3, upload_id: str = None) -
             summary_ids = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
-                max_length=min(150, max_sentences * 30),  # Adjust based on requested sentences
-                min_length=max(30, max_sentences * 8),    # Ensure minimum content
+                max_length=300,  # Increased from 150 to allow for longer summaries
+                min_length=100,  # Increased from 30 to ensure longer content
                 num_beams=4,
                 length_penalty=2.0,
                 early_stopping=True,
