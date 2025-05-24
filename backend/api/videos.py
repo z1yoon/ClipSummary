@@ -36,7 +36,7 @@ class SummaryResponse(BaseModel):
 @router.get("/{video_id}")
 async def get_video_details(
     video_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user = Depends(get_current_user)  # Remove type hint to be flexible
 ):
     """Get video details including available languages and summary"""
     try:
@@ -358,14 +358,22 @@ async def list_all_videos(
 
 @router.get("/user/videos")
 async def list_user_videos(
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(get_current_user),  # Remove type hint to be flexible
     skip: int = Query(0, description="Skip the first N videos"),
     limit: int = Query(20, description="Limit the number of videos returned")
 ):
     """List all videos uploaded by the current user"""
     try:
+        # Handle both dict and User object formats
+        if hasattr(current_user, 'id'):
+            user_id = current_user.id
+        elif isinstance(current_user, dict):
+            user_id = current_user['id']
+        else:
+            user_id = str(current_user)  # Fallback
+            
         # Check cache first for faster response
-        cache_key = f"user_videos:{current_user['id']}:{skip}:{limit}"
+        cache_key = f"user_videos:{user_id}:{skip}:{limit}"
         cached_result = get_cached_result(cache_key)
         if cached_result:
             return cached_result
