@@ -7,6 +7,8 @@ import os
 from dotenv import load_dotenv
 import threading
 import logging
+from contextlib import asynccontextmanager
+import warnings
 
 # Add this line to treat the directory as a package
 import sys
@@ -17,6 +19,14 @@ from api.routes import router as main_router
 # Import database modules
 from db.database import engine
 from db.models import Base
+
+# Suppress compatibility warnings at startup
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', message='.*pyannote.audio.*')
+warnings.filterwarnings('ignore', message='.*torch.*')
+warnings.filterwarnings('ignore', message='.*TensorFloat-32.*')
+warnings.filterwarnings('ignore', message='.*pytorch_lightning.*')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,11 +45,42 @@ class LargeFileMiddleware(BaseHTTPMiddleware):
             }
         return await call_next(request)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown"""
+    logger.info("Starting ClipSummary API server...")
+    
+    # Initialize database first
+    init_database()
+    
+    # Start preloading in background after a delay
+    def delayed_preload():
+        # Wait for 10 seconds before starting to load the model
+        # This gives time for the API to be fully ready to serve requests
+        import time
+        time.sleep(10)
+        try:
+            from ai.whisperx import load_models
+            load_models()
+        except Exception as e:
+            logger.error(f"Failed to preload models: {e}")
+    
+    # Start preloading in background
+    preload_thread = threading.Thread(target=delayed_preload)
+    preload_thread.daemon = True
+    preload_thread.start()
+    logger.info("WhisperX pre-loading will start in 10 seconds")
+    
+    yield
+    
+    logger.info("Shutting down ClipSummary API server...")
+
 # Initialize FastAPI app with increased limits for large files
 app = FastAPI(
-    title="Clip Summary API",
+    title="ClipSummary API",
     description="API for video transcription, summarization, and translation",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -66,34 +107,6 @@ try:
 except Exception as e:
     print(f"Warning: Could not set permissions on uploads directory: {e}")
 
-# Pre-load WhisperX model in background thread to avoid blocking startup
-def preload_whisperx_model():
-    logger.info("Pre-loading WhisperX model in background thread...")
-    try:
-        # Import AI modules only when needed
-        from ai import whisperx
-        
-        # Set a limit on CPU usage if possible to prevent server from becoming unresponsive
-        try:
-            import psutil
-            current_process = psutil.Process()
-            if hasattr(current_process, 'cpu_affinity'):
-                # Use only half of the available CPUs for model loading to keep system responsive
-                available_cpus = len(current_process.cpu_affinity())
-                cpus_to_use = max(1, available_cpus // 2)
-                new_affinity = list(range(cpus_to_use))
-                current_process.cpu_affinity(new_affinity)
-                logger.info(f"Limited model loading to {cpus_to_use} CPU cores to maintain responsiveness")
-        except (ImportError, Exception) as e:
-            logger.warning(f"Could not set CPU affinity for model loading thread: {e}")
-        
-        # Load the model with improved thread synchronization
-        whisperx.load_models()
-        logger.info("WhisperX model pre-loaded successfully!")
-    except Exception as e:
-        logger.error(f"Error pre-loading WhisperX model: {str(e)}")
-        logger.info("Will load model on first request instead")
-
 # Initialize database tables
 def init_database():
     logger.info("Initializing database...")
@@ -105,44 +118,13 @@ def init_database():
     except Exception as e:
         logger.error(f"Error initializing database: {str(e)}")
 
-# Start model pre-loading in background after startup
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Starting ClipSummary API server...")
-    
-    # Suppress compatibility warnings
-    import warnings
-    warnings.filterwarnings('ignore', category=UserWarning)
-    warnings.filterwarnings('ignore', category=FutureWarning)
-    warnings.filterwarnings('ignore', message='.*pyannote.audio.*')
-    warnings.filterwarnings('ignore', message='.*torch.*')
-    warnings.filterwarnings('ignore', message='.*TensorFloat-32.*')
-    
-    # Initialize database first
-    init_database()
-    
-    # Start preloading in background after a delay
-    def delayed_preload():
-        # Wait for 10 seconds before starting to load the model
-        # This gives time for the API to be fully ready to serve requests
-        import time
-        time.sleep(10)
-        preload_whisperx_model()
-    
-    # Start preloading in background
-    preload_thread = threading.Thread(target=delayed_preload)
-    preload_thread.daemon = True
-    preload_thread.start()
-    logger.info("WhisperX pre-loading will start in 10 seconds")
-
-# Mount static directories for serving uploaded files
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
+# Health check endpoint
 @app.get("/health")
 def health_check():
     """Health check endpoint"""
     return {"status": "ok"}
 
+# Welcome message
 @app.get("/")
 def read_root():
     """Welcome message"""
@@ -163,7 +145,7 @@ async def http_exception_handler(request, exc):
         }
     )
 
-# Add generic exception handler to catch all errors
+# Add global exception handler to prevent crashes
 @app.middleware("http")
 async def catch_exceptions_middleware(request: Request, call_next):
     try:
@@ -183,6 +165,9 @@ async def catch_exceptions_middleware(request: Request, call_next):
                 "endpoint": str(request.url)
             }
         )
+
+# Mount static directories for serving uploaded files
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 if __name__ == "__main__":
     import uvicorn

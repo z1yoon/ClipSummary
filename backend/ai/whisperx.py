@@ -15,6 +15,7 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', message='.*pyannote.audio.*')
 warnings.filterwarnings('ignore', message='.*torch.*')
 warnings.filterwarnings('ignore', message='.*TensorFloat-32.*')
+warnings.filterwarnings('ignore', message='.*pytorch_lightning.*')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

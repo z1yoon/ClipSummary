@@ -34,21 +34,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Fix PyTorch Lightning checkpoint compatibility issues
-RUN python -c "
-import torch
-import warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
-print('PyTorch version:', torch.__version__)
-print('CUDA available:', torch.cuda.is_available())
-if torch.cuda.is_available():
-    print('CUDA version:', torch.version.cuda)
-    print('Device capability:', torch.cuda.get_device_capability(0))
-    print('Device name:', torch.cuda.get_device_name(0))
-    # Test tensor operations
-    x = torch.randn(5, 3).cuda()
-    print('GPU tensor test passed')
-"
+# Test PyTorch and CUDA setup
+RUN python -c "import torch; import warnings; warnings.filterwarnings('ignore'); print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('CUDA device count:', torch.cuda.device_count() if torch.cuda.is_available() else 0)"
 
 # Copy application files
 COPY ./ai ./ai
