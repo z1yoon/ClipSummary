@@ -50,12 +50,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu, compute, utility]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 180s
 
   redis:
     image: redis:alpine
