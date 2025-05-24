@@ -168,7 +168,7 @@
                                 <span class="video-status ${statusClass}">${video.status.charAt(0).toUpperCase() + video.status.slice(1)}</span>
                                 <div class="video-actions">
                                     <a href="/video.html?id=${video.upload_id}" class="btn btn-sm">View</a>
-                                    <button class="btn btn-sm btn-danger" onclick="deleteVideo('${video.id}')">Delete</button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteVideo('${video.upload_id}')">Delete</button>
                                 </div>
                             </div>
                         </div>
@@ -186,7 +186,7 @@
                     const token = localStorage.getItem('access_token');
                     const type = localStorage.getItem('token_type');
                     
-                    const response = await fetch(`/api/auth/me/videos/${videoId}`, {
+                    const response = await fetch(`/api/videos/${videoId}`, {
                         method: 'DELETE',
                         headers: {
                             'Authorization': `${type} ${token}`
@@ -194,8 +194,12 @@
                     });
                     
                     if (!response.ok) {
-                        throw new Error('Failed to delete video');
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Failed to delete video');
                     }
+                    
+                    const result = await response.json();
+                    alert(result.message || 'Video deleted successfully');
                     
                     // Refresh video list
                     fetchUserVideos();

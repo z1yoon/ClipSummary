@@ -746,3 +746,74 @@ async def get_available_translations(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting translations: {str(e)}"
         )
+
+@router.delete("/{video_id}")
+async def delete_video(
+    video_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a video and all its associated files"""
+    try:
+        import shutil
+        
+        # Check if video directory exists
+        video_dir = f"uploads/{video_id}"
+        if not os.path.exists(video_dir):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Video not found"
+            )
+        
+        # Verify this is a valid video directory by checking for info.json or result.json
+        info_path = os.path.join(video_dir, "info.json")
+        result_path = os.path.join(video_dir, "result.json")
+        
+        if not os.path.exists(info_path) and not os.path.exists(result_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invalid video directory - no video data found"
+            )
+        
+        # Delete the entire video directory
+        try:
+            shutil.rmtree(video_dir)
+            
+            # Clear any cached data for this video
+            from utils.cache import clear_cache
+            cache_patterns = [
+                f"video_{video_id}_*",
+                f"subtitles_{video_id}_*", 
+                f"summary_{video_id}_*",
+                f"user_videos:*"  # Clear user video list cache
+            ]
+            
+            for pattern in cache_patterns:
+                try:
+                    clear_cache(pattern)
+                except:
+                    pass  # Ignore cache clearing errors
+            
+            return {
+                "message": "Video deleted successfully",
+                "video_id": video_id,
+                "status": "deleted"
+            }
+            
+        except PermissionError as e:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission denied: Unable to delete video files. {str(e)}"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error deleting video files: {str(e)}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting video: {str(e)}"
+        )
