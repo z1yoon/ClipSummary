@@ -22,27 +22,29 @@ alembic==1.13.1
 ffmpeg-python==0.2.0
 yt-dlp>=2023.12.30
 
-# Scientific computing dependencies - compatible versions
-numpy>=1.24.0,<2.0.0
+# Scientific computing dependencies - Updated for WhisperX 3.3.4 compatibility
+numpy>=2.0.2
 matplotlib>=3.5.0
-scipy>=1.9.0,<1.12.0
-scikit-learn>=1.1.0,<1.4.0
+scipy>=1.9.0
+scikit-learn>=1.1.0
 
-# AI and ML dependencies with compatible versions
-# Use compatible whisperx version that works with newer torch/pyannote
-whisperx==3.1.1
-transformers==4.36.0
-accelerate==0.25.0
-torch-audio==2.1.0
+# AI and ML dependencies - Exact WhisperX 3.3.4 requirements from GitHub
+whisperx==3.3.4
+ctranslate2<4.5.0
+faster-whisper>=1.1.1
+nltk>=3.9.1
+onnxruntime>=1.19
+pandas>=2.2.3
+pyannote-audio>=3.3.2
+torch>=2.5.1
+torchaudio>=2.5.1
+transformers>=4.48.0
 
-# Speaker diarization with compatible versions
-pyannote.audio==3.1.1
-speechbrain==0.5.16
-
-# Additional dependencies for better compatibility
+# Additional ML dependencies for compatibility
+accelerate>=0.25.0
 librosa>=0.10.0
 soundfile>=0.12.1
-torchaudio>=2.1.0
+speechbrain>=0.5.16
 
-# Fix PyTorch Lightning compatibility
-pytorch-lightning==2.1.0
+# PyTorch Lightning - compatible with torch>=2.5.1
+pytorch-lightning>=2.1.0

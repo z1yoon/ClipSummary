@@ -5,23 +5,14 @@ import time
 import logging
 import gc
 import threading
-import warnings
 from typing import Dict, Any
 from utils.cache import update_processing_status
-
-# Suppress compatibility warnings
-warnings.filterwarnings('ignore', category=UserWarning)
-warnings.filterwarnings('ignore', category=FutureWarning)
-warnings.filterwarnings('ignore', message='.*pyannote.audio.*')
-warnings.filterwarnings('ignore', message='.*torch.*')
-warnings.filterwarnings('ignore', message='.*TensorFloat-32.*')
-warnings.filterwarnings('ignore', message='.*pytorch_lightning.*')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Force GPU usage - RTX 5090 with PyTorch 2.7.0 + CUDA 12.8
+# GPU configuration for RTX 5090 with PyTorch 2.5.1 + CUDA 12.4
 DEFAULT_MODEL = "large-v2"
 DEFAULT_DEVICE = "cuda"
 DEFAULT_COMPUTE_TYPE = "float16"
@@ -29,27 +20,36 @@ DEFAULT_COMPUTE_TYPE = "float16"
 # Force CUDA visible devices to ensure GPU is used
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-# Fix compatibility issues
-def fix_compatibility_issues():
-    """Fix compatibility issues between different library versions"""
+# Global model cache
+_model_cache = {}
+_alignment_cache = {}
+_diarization_cache = {}
+
+def preload_whisperx_model():
+    """Pre-load WhisperX model to reduce first-request latency."""
     try:
-        # Disable TF32 for better reproducibility (addresses pyannote.audio warnings)
-        torch.backends.cuda.matmul.allow_tf32 = False
-        torch.backends.cudnn.allow_tf32 = False
+        logger.info("Pre-loading WhisperX model for faster processing...")
         
-        # Set cuDNN settings for stability
-        torch.backends.cudnn.deterministic = False
-        torch.backends.cudnn.benchmark = True
+        # Check if CUDA is available
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if device == "cuda" else "int8"
         
-        logger.info("Applied compatibility fixes for library version conflicts")
+        logger.info(f"Using device: {device}, compute_type: {compute_type}")
+        
+        # Load main transcription model
+        model = whisperx.load_model(DEFAULT_MODEL, device, compute_type=compute_type)
+        _model_cache['transcription'] = model
+        
+        logger.info("WhisperX model pre-loaded successfully")
         
     except Exception as e:
-        logger.warning(f"Could not apply compatibility fixes: {e}")
+        logger.error(f"Failed to pre-load WhisperX model: {e}")
 
-# Apply compatibility fixes
-fix_compatibility_issues()
+def load_models():
+    """Load all required models for processing"""
+    preload_whisperx_model()
 
-# Verify RTX 5090 CUDA compatibility
+# Verify RTX 5090 CUDA
 def verify_rtx5090_cuda():
     """Verify CUDA works properly with RTX 5090"""
     if not torch.cuda.is_available():
