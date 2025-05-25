@@ -40,9 +40,9 @@ jobs:
       - name: Run unit tests
         working-directory: ./backend
         env:
-          DATABASE_URL: postgresql://clipsummary:clipsummary@localhost:5432/clipsummary
-          REDIS_URL: redis://localhost:6379/0
-          JWT_SECRET: test_secret_key
+          DATABASE_URL: sqlite:///./clipsummary.db
+          SECRET_KEY: test_secret_key
+          JWT_SECRET: test_jwt_secret
           JWT_ALGORITHM: HS256
           ACCESS_TOKEN_EXPIRE_MINUTES: 30
           TEST_MODE: true

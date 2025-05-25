@@ -1,19 +1,18 @@
 import os
 import asyncio
 import tempfile
-import base64
-import hashlib
-from typing import Optional, BinaryIO, List
+from typing import Optional, BinaryIO, AsyncGenerator
 from datetime import datetime, timedelta
 from azure.storage.blob import BlobServiceClient, BlobClient, generate_blob_sas, BlobSasPermissions
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
 from fastapi import UploadFile
 import logging
+import aiofiles
 
 logger = logging.getLogger(__name__)
 
 class AzureBlobStorage:
-    """Azure Blob Storage interface with chunked upload support for large files"""
+    """Simple and clean Azure Blob Storage interface with signed URL support and streaming capabilities"""
     
     def __init__(self):
         self.connection_string = os.getenv("BLOB_CONNECTION_STRING")
@@ -25,6 +24,9 @@ class AzureBlobStorage:
         # Initialize sync client
         self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
         
+        # Initialize async client for streaming operations
+        self.async_blob_service_client = AsyncBlobServiceClient.from_connection_string(self.connection_string)
+        
         # Extract account name and key for SAS generation
         conn_parts = dict(item.split('=', 1) for item in self.connection_string.split(';') if '=' in item)
         self.account_name = conn_parts.get('AccountName')
@@ -33,9 +35,6 @@ class AzureBlobStorage:
         if not self.account_name or not self.account_key:
             raise ValueError("Could not extract account name and key from connection string")
         
-        # Configure CORS for direct browser uploads
-        self._configure_cors()
-        
         # Create container if it doesn't exist
         try:
             self.blob_service_client.create_container(self.container_name)
@@ -43,59 +42,38 @@ class AzureBlobStorage:
         except Exception:
             logger.info(f"Container {self.container_name} already exists")
     
-    def _configure_cors(self):
-        """Configure CORS settings for Azure Blob Storage to allow direct browser uploads"""
-        try:
-            from azure.storage.blob import CorsRule
-            
-            # Define CORS rule for browser uploads
-            cors_rule = CorsRule(
-                allowed_origins=['*'],  # In production, specify your domain
-                allowed_methods=['PUT', 'POST', 'GET', 'HEAD', 'OPTIONS'],
-                allowed_headers=['*'],
-                exposed_headers=['*'],
-                max_age_in_seconds=3600
-            )
-            
-            # Set CORS rules
-            self.blob_service_client.set_service_properties(cors=[cors_rule])
-            logger.info("CORS configured for Azure Blob Storage")
-            
-        except Exception as e:
-            logger.warning(f"Failed to configure CORS (this might be normal): {str(e)}")
-            # Continue without CORS - it might already be configured or not needed
-    
     def generate_upload_url(self, upload_id: str, filename: str, expiry_hours: int = 1) -> dict:
-        """Generate a signed URL for direct upload to Azure Blob Storage with chunked upload support"""
+        """Generate a signed URL for direct upload to Azure Blob Storage"""
         blob_name = f"{upload_id}/{filename}"
         
         try:
             # Calculate expiry time
             expiry_time = datetime.utcnow() + timedelta(hours=expiry_hours)
             
-            # Generate SAS token with all necessary permissions for chunked uploads
+            # Generate SAS token with upload permissions
             sas_token = generate_blob_sas(
                 account_name=self.account_name,
                 container_name=self.container_name,
                 blob_name=blob_name,
                 account_key=self.account_key,
-                permission=BlobSasPermissions(write=True, create=True, add=True),
+                permission=BlobSasPermissions(write=True, create=True),
                 expiry=expiry_time
             )
             
-            # Base URL for the blob
-            base_url = f"https://{self.account_name}.blob.core.windows.net/{self.container_name}/{blob_name}"
+            # Construct the full upload URL
+            upload_url = f"https://{self.account_name}.blob.core.windows.net/{self.container_name}/{blob_name}?{sas_token}"
             
             logger.info(f"Generated signed upload URL for {blob_name}, expires at {expiry_time}")
             
             return {
-                "base_url": base_url,
-                "sas_token": sas_token,
+                "upload_url": upload_url,
                 "blob_name": blob_name,
                 "expires_at": expiry_time.isoformat(),
-                "account_name": self.account_name,
-                "container_name": self.container_name,
-                "upload_type": "chunked_blocks"  # Indicate this uses chunked upload
+                "upload_method": "PUT",
+                "headers": {
+                    "x-ms-blob-type": "BlockBlob",
+                    "Content-Type": "application/octet-stream"
+                }
             }
             
         except Exception as e:
@@ -177,6 +155,85 @@ class AzureBlobStorage:
             logger.error(f"Failed to download {blob_name}: {str(e)}")
             raise
     
+    async def stream_blob_to_file(self, upload_id: str, filename: str, local_path: str, 
+                                  chunk_size: int = 64 * 1024 * 1024, 
+                                  progress_callback=None) -> str:
+        """
+        Advanced: Stream download blob directly to file with async I/O for better resource usage.
+        Ideal for very large files where you want to process while downloading.
+        """
+        blob_name = f"{upload_id}/{filename}"
+        
+        try:
+            async_blob_client = self.async_blob_service_client.get_blob_client(
+                container=self.container_name, 
+                blob=blob_name
+            )
+            
+            logger.info(f"Starting async streaming download of {blob_name} to {local_path}")
+            
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            
+            # Get blob properties to track progress
+            properties = await async_blob_client.get_blob_properties()
+            total_size = properties.size
+            downloaded_size = 0
+            
+            # Stream download with async file operations
+            async with aiofiles.open(local_path, "wb") as download_file:
+                async with async_blob_client:
+                    download_stream = await async_blob_client.download_blob()
+                    
+                    # Stream in chunks for memory efficiency
+                    async for chunk in download_stream.chunks():
+                        await download_file.write(chunk)
+                        downloaded_size += len(chunk)
+                        
+                        # Call progress callback if provided
+                        if progress_callback:
+                            progress_percent = (downloaded_size / total_size) * 100
+                            await progress_callback(downloaded_size, total_size, progress_percent)
+            
+            file_size = os.path.getsize(local_path)
+            logger.info(f"Successfully streamed {blob_name} ({file_size} bytes) to {local_path}")
+            
+            return local_path
+            
+        except Exception as e:
+            logger.error(f"Failed to stream download {blob_name}: {str(e)}")
+            raise
+        finally:
+            await self.async_blob_service_client.close()
+    
+    async def stream_blob_chunks(self, upload_id: str, filename: str, 
+                                chunk_size: int = 64 * 1024 * 1024) -> AsyncGenerator[bytes, None]:
+        """
+        Advanced: Stream blob content as chunks without saving to disk.
+        Useful for processing video data directly from blob storage.
+        """
+        blob_name = f"{upload_id}/{filename}"
+        
+        try:
+            async_blob_client = self.async_blob_service_client.get_blob_client(
+                container=self.container_name, 
+                blob=blob_name
+            )
+            
+            logger.info(f"Starting chunk streaming for {blob_name}")
+            
+            async with async_blob_client:
+                download_stream = await async_blob_client.download_blob()
+                
+                async for chunk in download_stream.chunks():
+                    yield chunk
+                    
+        except Exception as e:
+            logger.error(f"Failed to stream chunks for {blob_name}: {str(e)}")
+            raise
+        finally:
+            await self.async_blob_service_client.close()
+    
     def get_blob_url(self, upload_id: str, filename: str) -> str:
         """Get the URL for a blob (for direct streaming if needed)"""
         blob_name = f"{upload_id}/{filename}"
@@ -201,6 +258,11 @@ class AzureBlobStorage:
         except Exception as e:
             logger.error(f"Failed to delete blob {blob_name}: {str(e)}")
             return False
+
+    async def close(self):
+        """Clean up async connections"""
+        if hasattr(self, 'async_blob_service_client'):
+            await self.async_blob_service_client.close()
 
 # Global instance
 azure_storage = AzureBlobStorage()

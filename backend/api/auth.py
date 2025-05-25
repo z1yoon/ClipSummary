@@ -18,7 +18,7 @@ from schemas.users import UserCreate, TokenData
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     print("WARNING: JWT_SECRET not set in environment variables. Using fallback value for development only.")
-    JWT_SECRET = "jwtsecretkey"  # Simple fallback without SECRET_KEY dependency
+    JWT_SECRET = os.getenv("SECRET_KEY", "jwtsecretkey")  # Fallback to SECRET_KEY for backward compatibility
 
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days default
