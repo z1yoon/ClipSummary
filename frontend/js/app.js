@@ -6,22 +6,43 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateAuthUI() {
-        const authSection = document.querySelector('.auth-section');
-        const userSection = document.querySelector('.user-section');
-        const userName = document.querySelector('.user-name');
+        const authLinks = document.querySelector('.auth-links');
         
         if (isAuthenticated()) {
-            if (authSection) authSection.style.display = 'none';
-            if (userSection) userSection.style.display = 'flex';
-            
-            // Get username from localStorage
+            // User is logged in - show user menu
             const username = localStorage.getItem('username');
-            if (userName && username) {
-                userName.textContent = username;
+            if (authLinks) {
+                authLinks.innerHTML = `
+                    <li><a href="/profile.html" class="btn btn-outline">
+                        <i class="fas fa-video"></i>
+                        My Videos
+                    </a></li>
+                    <li><a href="#" id="logout-link" class="btn btn-primary">
+                        <i class="fas fa-user"></i>
+                        ${username || 'User'}
+                    </a></li>
+                `;
+                
+                // Add event listener for logout
+                const logoutLink = document.getElementById('logout-link');
+                if (logoutLink) {
+                    logoutLink.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        logout();
+                    });
+                }
             }
         } else {
-            if (authSection) authSection.style.display = 'flex';
-            if (userSection) userSection.style.display = 'none';
+            // User is not logged in - show login/register buttons
+            if (authLinks) {
+                authLinks.innerHTML = `
+                    <li><a href="/login.html" class="btn btn-outline login-btn">
+                        <span>Login</span>
+                        <i class="fas fa-sign-in-alt"></i>
+                    </a></li>
+                    <li><a href="/signup.html" class="btn btn-primary">Register Now</a></li>
+                `;
+            }
         }
     }
 
