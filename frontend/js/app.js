@@ -723,8 +723,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     startTime: Date.now()
                 });
                 
-                // Begin tracking the processing status with simple polling
-                trackProcessingSimple(videoId);
+                // Use the full tracking function for YouTube to get detailed progress
+                trackProcessing(videoId);
             } else {
                 throw new Error('No video ID in response');
             }

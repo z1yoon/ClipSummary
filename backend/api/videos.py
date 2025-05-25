@@ -56,6 +56,16 @@ async def get_video_details(
             with open(info_path, "r") as f:
                 video_info = json.load(f)
             
+            # Check user ownership for uploaded videos
+            video_user_id = video_info.get("user_id")
+            current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
+            
+            if video_user_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to access this video"
+                )
+            
             # Check for local video file
             if os.path.exists(f"uploads/{video_id}/video.mp4"):
                 video_url = f"/uploads/{video_id}/video.mp4"
@@ -64,6 +74,16 @@ async def get_video_details(
         elif os.path.exists(result_path):
             with open(result_path, "r") as f:
                 result_data = json.load(f)
+            
+            # Check user ownership for YouTube videos
+            video_user_id = result_data.get("user_id")
+            current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
+            
+            if video_user_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to access this video"
+                )
             
             # Extract video info from result data
             video_info = {
@@ -149,6 +169,30 @@ async def get_video_subtitles(
 ):
     """Get subtitles for a specific language"""
     try:
+        # Verify user ownership first
+        info_path = f"uploads/{video_id}/info.json"
+        result_path = f"uploads/{video_id}/result.json"
+        
+        user_verified = False
+        current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
+        
+        if os.path.exists(info_path):
+            with open(info_path, "r") as f:
+                info_data = json.load(f)
+            if info_data.get("user_id") == current_user_id:
+                user_verified = True
+        elif os.path.exists(result_path):
+            with open(result_path, "r") as f:
+                result_data = json.load(f)
+            if result_data.get("user_id") == current_user_id:
+                user_verified = True
+        
+        if not user_verified:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this video"
+            )
+        
         subtitle_path = f"uploads/{video_id}/subtitles/{language}.json"
         
         # First, check if we have dedicated subtitle files
@@ -158,7 +202,6 @@ async def get_video_subtitles(
             return subtitles
         
         # For YouTube videos, check if we have transcript data in result.json
-        result_path = f"uploads/{video_id}/result.json"
         if os.path.exists(result_path):
             with open(result_path, "r") as f:
                 result_data = json.load(f)
@@ -287,6 +330,16 @@ async def get_video_summary(
         with open(result_path, "r") as f:
             result = json.load(f)
 
+        # Verify user ownership
+        video_user_id = result.get("user_id")
+        current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
+        
+        if video_user_id != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this video"
+            )
+
         summary = None
         
         # Check if we already have this language's summary
@@ -403,17 +456,20 @@ async def list_user_videos(
                         try:
                             with open(info_path, "r") as f:
                                 info = json.load(f)
-                            video_data = {
-                                "id": item,
-                                "upload_id": item,
-                                "title": info.get("title", "Untitled"),
-                                "filename": info.get("filename", ""),
-                                "status": "completed",
-                                "created_at": info.get("created_at", time.time()),
-                                "thumbnail": info.get("thumbnail"),
-                                "duration": info.get("duration", 0),
-                                "url": None  # Local upload
-                            }
+                            
+                            # Only include videos that belong to the current user
+                            if info.get("user_id") == user_id:
+                                video_data = {
+                                    "id": item,
+                                    "upload_id": item,
+                                    "title": info.get("title", "Untitled"),
+                                    "filename": info.get("filename", ""),
+                                    "status": "completed",
+                                    "created_at": info.get("created_at", time.time()),
+                                    "thumbnail": info.get("thumbnail"),
+                                    "duration": info.get("duration", 0),
+                                    "url": None  # Local upload
+                                }
                         except Exception as e:
                             print(f"Error loading info.json for {item}: {e}")
                             continue
@@ -423,17 +479,20 @@ async def list_user_videos(
                         try:
                             with open(result_path, "r") as f:
                                 result = json.load(f)
-                            video_data = {
-                                "id": item,
-                                "upload_id": item,
-                                "title": result.get("title", "Untitled"),
-                                "filename": result.get("title", ""),
-                                "status": "completed",
-                                "created_at": result.get("created_at", time.time()),
-                                "thumbnail": result.get("thumbnail"),
-                                "duration": result.get("duration", 0),
-                                "url": result.get("url")  # YouTube URL
-                            }
+                            
+                            # Only include videos that belong to the current user
+                            if result.get("user_id") == user_id:
+                                video_data = {
+                                    "id": item,
+                                    "upload_id": item,
+                                    "title": result.get("title", "Untitled"),
+                                    "filename": result.get("title", ""),
+                                    "status": "completed",
+                                    "created_at": result.get("created_at", time.time()),
+                                    "thumbnail": result.get("thumbnail"),
+                                    "duration": result.get("duration", 0),
+                                    "url": result.get("url")  # YouTube URL
+                                }
                         except Exception as e:
                             print(f"Error loading result.json for {item}: {e}")
                             continue
