@@ -1,7 +1,9 @@
 import os
 import asyncio
 import tempfile
-from typing import Optional, BinaryIO
+import base64
+import hashlib
+from typing import Optional, BinaryIO, List
 from datetime import datetime, timedelta
 from azure.storage.blob import BlobServiceClient, BlobClient, generate_blob_sas, BlobSasPermissions
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
@@ -11,7 +13,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class AzureBlobStorage:
-    """Simple and clean Azure Blob Storage interface with signed URL support"""
+    """Azure Blob Storage interface with chunked upload support for large files"""
     
     def __init__(self):
         self.connection_string = os.getenv("BLOB_CONNECTION_STRING")
@@ -64,37 +66,36 @@ class AzureBlobStorage:
             # Continue without CORS - it might already be configured or not needed
     
     def generate_upload_url(self, upload_id: str, filename: str, expiry_hours: int = 1) -> dict:
-        """Generate a signed URL for direct upload to Azure Blob Storage"""
+        """Generate a signed URL for direct upload to Azure Blob Storage with chunked upload support"""
         blob_name = f"{upload_id}/{filename}"
         
         try:
             # Calculate expiry time
             expiry_time = datetime.utcnow() + timedelta(hours=expiry_hours)
             
-            # Generate SAS token with upload permissions
+            # Generate SAS token with all necessary permissions for chunked uploads
             sas_token = generate_blob_sas(
                 account_name=self.account_name,
                 container_name=self.container_name,
                 blob_name=blob_name,
                 account_key=self.account_key,
-                permission=BlobSasPermissions(write=True, create=True),
+                permission=BlobSasPermissions(write=True, create=True, add=True),
                 expiry=expiry_time
             )
             
-            # Construct the full upload URL
-            upload_url = f"https://{self.account_name}.blob.core.windows.net/{self.container_name}/{blob_name}?{sas_token}"
+            # Base URL for the blob
+            base_url = f"https://{self.account_name}.blob.core.windows.net/{self.container_name}/{blob_name}"
             
             logger.info(f"Generated signed upload URL for {blob_name}, expires at {expiry_time}")
             
             return {
-                "upload_url": upload_url,
+                "base_url": base_url,
+                "sas_token": sas_token,
                 "blob_name": blob_name,
                 "expires_at": expiry_time.isoformat(),
-                "upload_method": "PUT",
-                "headers": {
-                    "x-ms-blob-type": "BlockBlob",
-                    "Content-Type": "application/octet-stream"
-                }
+                "account_name": self.account_name,
+                "container_name": self.container_name,
+                "upload_type": "chunked_blocks"  # Indicate this uses chunked upload
             }
             
         except Exception as e:

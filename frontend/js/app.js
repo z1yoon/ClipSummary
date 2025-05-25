@@ -288,7 +288,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const uploadData = await generateUrlResponse.json();
             console.log('Signed URL generated:', { 
                 uploadId: uploadData.upload_id,
-                expires: uploadData.expires_at 
+                expires: uploadData.expires_at,
+                uploadType: uploadData.upload_type
             });
 
             // Store upload progress for recovery
@@ -298,19 +299,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 totalSize: file.size,
                 status: 'uploading',
                 startTime: Date.now(),
-                method: 'signed_url'
+                method: 'azure_chunked'
             };
             localStorage.setItem(`upload_progress_${uploadData.upload_id}`, JSON.stringify(uploadProgress));
 
-            // Step 2: Upload directly to Azure Blob Storage with progress tracking
-            showProcessingStatus({
-                status: 'uploading',
-                progress: 10,
-                message: `Starting upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB) to secure cloud storage...`
-            });
-
-            // Use XMLHttpRequest for upload progress tracking
-            const uploadResult = await uploadToAzureWithProgress(uploadData, file);
+            // Step 2: Upload to Azure Blob Storage using chunked upload for large files
+            const CHUNK_SIZE_THRESHOLD = 100 * 1024 * 1024; // 100MB threshold for chunked upload
+            
+            let uploadResult;
+            if (file.size > CHUNK_SIZE_THRESHOLD) {
+                console.log(`File size ${(file.size / (1024 * 1024)).toFixed(2)} MB exceeds threshold, using chunked upload`);
+                uploadResult = await uploadToAzureChunked(uploadData, file);
+            } else {
+                console.log(`File size ${(file.size / (1024 * 1024)).toFixed(2)} MB is small enough for direct upload`);
+                uploadResult = await uploadToAzureDirect(uploadData, file);
+            }
             
             console.log('File uploaded successfully to Azure Blob Storage:', uploadResult);
 
@@ -364,7 +367,111 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    function uploadToAzureWithProgress(uploadData, file) {
+    // Chunked upload for large files (>100MB)
+    async function uploadToAzureChunked(uploadData, file) {
+        const CHUNK_SIZE = 64 * 1024 * 1024; // 64MB chunks
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const blockIds = [];
+        
+        console.log(`Starting chunked upload: ${totalChunks} chunks of ${CHUNK_SIZE / (1024 * 1024)}MB each`);
+        
+        showProcessingStatus({
+            status: 'uploading',
+            progress: 10,
+            message: `Starting chunked upload: ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024)).toFixed(0)}MB each...`
+        });
+        
+        // Upload each chunk
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, file.size);
+            const chunk = file.slice(start, end);
+            
+            // Generate a unique block ID (base64 encoded)
+            const blockId = btoa(`block-${chunkIndex.toString().padStart(6, '0')}`);
+            blockIds.push(blockId);
+            
+            const chunkProgress = 10 + ((chunkIndex / totalChunks) * 75); // 10% to 85%
+            const uploadedMB = (start / (1024 * 1024)).toFixed(1);
+            const totalMB = (file.size / (1024 * 1024)).toFixed(1);
+            
+            showProcessingStatus({
+                status: 'uploading',
+                progress: chunkProgress,
+                message: `Uploading chunk ${chunkIndex + 1}/${totalChunks} (${uploadedMB}MB / ${totalMB}MB)...`
+            });
+            
+            // Upload this chunk
+            const chunkUrl = `${uploadData.base_url}?comp=block&blockid=${encodeURIComponent(blockId)}&${uploadData.sas_token}`;
+            
+            try {
+                const response = await fetch(chunkUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'x-ms-blob-type': 'BlockBlob',
+                        'Content-Type': 'application/octet-stream'
+                    },
+                    body: chunk
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to upload chunk ${chunkIndex + 1}: ${response.status} - ${errorText}`);
+                }
+                
+                console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`);
+                
+            } catch (error) {
+                console.error(`Error uploading chunk ${chunkIndex + 1}:`, error);
+                throw new Error(`Failed to upload chunk ${chunkIndex + 1}: ${error.message}`);
+            }
+        }
+        
+        // Commit all the blocks
+        showProcessingStatus({
+            status: 'uploading',
+            progress: 85,
+            message: 'Finalizing upload - combining all chunks...'
+        });
+        
+        const commitUrl = `${uploadData.base_url}?comp=blocklist&${uploadData.sas_token}`;
+        const blockListXml = `<?xml version="1.0" encoding="utf-8"?>
+<BlockList>
+${blockIds.map(blockId => `  <Latest>${blockId}</Latest>`).join('\n')}
+</BlockList>`;
+        
+        try {
+            const commitResponse = await fetch(commitUrl, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/xml',
+                    'x-ms-blob-content-type': 'video/mp4'
+                },
+                body: blockListXml
+            });
+            
+            if (!commitResponse.ok) {
+                const errorText = await commitResponse.text();
+                throw new Error(`Failed to commit blocks: ${commitResponse.status} - ${errorText}`);
+            }
+            
+            showProcessingStatus({
+                status: 'uploaded',
+                progress: 90,
+                message: 'Chunked upload completed successfully! Verifying file...'
+            });
+            
+            console.log('All chunks committed successfully');
+            return { status: 'success', method: 'chunked', chunks: totalChunks };
+            
+        } catch (error) {
+            console.error('Error committing blocks:', error);
+            throw new Error(`Failed to finalize chunked upload: ${error.message}`);
+        }
+    }
+
+    // Direct upload for smaller files (<100MB)
+    function uploadToAzureDirect(uploadData, file) {
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
             
@@ -393,22 +500,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     showProcessingStatus({
                         status: 'uploaded',
                         progress: 90,
-                        message: `Upload completed successfully! Verifying file integrity...`
+                        message: `Direct upload completed successfully!`
                     });
                     resolve({
                         status: xhr.status,
                         statusText: xhr.statusText,
-                        response: xhr.response
+                        response: xhr.response,
+                        method: 'direct'
                     });
                 } else {
                     const errorDetails = {
                         status: xhr.status,
                         statusText: xhr.statusText,
                         response: xhr.responseText,
-                        uploadUrl: uploadData.upload_url.split('?')[0] // Log URL without SAS token
+                        uploadUrl: uploadData.base_url
                     };
-                    console.error('Azure upload failed:', errorDetails);
-                    reject(new Error(`Upload to cloud storage failed: ${xhr.status} - ${xhr.statusText || xhr.responseText}`));
+                    console.error('Azure direct upload failed:', errorDetails);
+                    reject(new Error(`Direct upload to cloud storage failed: ${xhr.status} - ${xhr.statusText || xhr.responseText}`));
                 }
             });
             
@@ -419,59 +527,28 @@ document.addEventListener('DOMContentLoaded', function() {
                     statusText: xhr.statusText,
                     response: xhr.responseText
                 });
-                reject(new Error('Network error during upload to cloud storage'));
+                reject(new Error('Network error during direct upload to cloud storage'));
             });
             
             // Handle upload timeout
             xhr.addEventListener('timeout', () => {
-                reject(new Error('Upload to cloud storage timed out'));
+                reject(new Error('Direct upload to cloud storage timed out'));
             });
             
-            // Configure the request
-            xhr.open(uploadData.upload_method, uploadData.upload_url);
+            // Configure the request for direct upload
+            const directUploadUrl = `${uploadData.base_url}?${uploadData.sas_token}`;
+            xhr.open('PUT', directUploadUrl);
             
             // Set required headers for Azure Blob Storage
-            Object.entries(uploadData.headers).forEach(([key, value]) => {
-                xhr.setRequestHeader(key, value);
-            });
+            xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
             
-            // Set timeout (2 hours for large files)
-            xhr.timeout = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+            // Set timeout (1 hour for direct uploads)
+            xhr.timeout = 60 * 60 * 1000; // 1 hour in milliseconds
             
             // Start the upload
             xhr.send(file);
         });
-    }
-
-    // Upload speed calculation helper
-    let uploadStartTime = null;
-    let lastUploadedBytes = 0;
-    let lastUploadTime = null;
-
-    function calculateUploadSpeed(uploadedBytes) {
-        const now = Date.now();
-        
-        if (!uploadStartTime) {
-            uploadStartTime = now;
-            lastUploadedBytes = uploadedBytes;
-            lastUploadTime = now;
-            return null;
-        }
-        
-        // Calculate speed based on recent progress (last 2 seconds)
-        const timeDiff = now - lastUploadTime;
-        if (timeDiff >= 2000) { // Update speed every 2 seconds
-            const bytesDiff = uploadedBytes - lastUploadedBytes;
-            const speedBps = bytesDiff / (timeDiff / 1000); // bytes per second
-            const speedMBps = (speedBps / (1024 * 1024)).toFixed(1); // MB per second
-            
-            lastUploadedBytes = uploadedBytes;
-            lastUploadTime = now;
-            
-            return speedMBps;
-        }
-        
-        return null;
     }
 
     // YouTube URL processing
