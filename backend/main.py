@@ -179,6 +179,6 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
         timeout_keep_alive=7200,  # 2 hour keep-alive
-        limit_concurrency=2,  # Limit concurrent uploads
-        backlog=4  # Small backlog for large file uploads
+        limit_concurrency=10,  # Increased to handle concurrent chunk uploads
+        backlog=8  # Increased backlog for concurrent uploads
     )

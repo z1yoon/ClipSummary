@@ -215,21 +215,50 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(`Failed to initialize upload: ${initResponse.status}`);
             }
 
-            // Upload chunks one by one (no parallel uploads to avoid 400 errors)
+            // Upload chunks concurrently with limited parallelism
+            const maxConcurrentUploads = 6; // Limit concurrent uploads to avoid overwhelming server
             let completedChunks = 0;
             
-            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-                const progress = Math.round((chunkIndex / totalChunks) * 85); // Reserve 15% for processing
-                showSimpleProgress(`Uploading chunk ${chunkIndex + 1}/${totalChunks}...`, progress);
+            // Create array of chunk upload promises
+            const chunkPromises = [];
+            const semaphore = new Array(maxConcurrentUploads).fill(null);
+            
+            const uploadChunkWithSemaphore = async (chunkIndex) => {
+                // Wait for an available slot
+                const slotIndex = await new Promise(resolve => {
+                    const checkSlot = () => {
+                        const freeSlot = semaphore.findIndex(slot => slot === null);
+                        if (freeSlot !== -1) {
+                            semaphore[freeSlot] = chunkIndex;
+                            resolve(freeSlot);
+                        } else {
+                            setTimeout(checkSlot, 50);
+                        }
+                    };
+                    checkSlot();
+                });
                 
-                await uploadSingleChunk(file, chunkIndex, CHUNK_SIZE, uploadId);
-                completedChunks++;
-                
-                // Small delay to prevent overwhelming the server
-                if (chunkIndex < totalChunks - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                try {
+                    await uploadSingleChunk(file, chunkIndex, CHUNK_SIZE, uploadId);
+                    completedChunks++;
+                    
+                    // Update progress
+                    const progress = Math.round((completedChunks / totalChunks) * 85);
+                    showSimpleProgress(`Uploading... ${completedChunks}/${totalChunks} chunks`, progress);
+                    
+                } finally {
+                    // Free the slot
+                    semaphore[slotIndex] = null;
                 }
+            };
+            
+            // Start all chunk uploads
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                chunkPromises.push(uploadChunkWithSemaphore(chunkIndex));
             }
+            
+            // Wait for all chunks to complete
+            await Promise.all(chunkPromises);
 
             // Finalize upload
             showSimpleProgress('Finalizing upload...', 90);
