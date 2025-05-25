@@ -184,11 +184,23 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function uploadVideoFileChunked(file) {
-        const CHUNK_SIZE = 5 * 1024 * 1024; // Simple 5MB chunks for all files
+        // Dynamic chunk size based on file size for optimal performance
+        let CHUNK_SIZE;
+        if (file.size > 500 * 1024 * 1024) { // Files > 500MB
+            CHUNK_SIZE = 50 * 1024 * 1024; // 50MB chunks
+        } else if (file.size > 100 * 1024 * 1024) { // Files > 100MB
+            CHUNK_SIZE = 20 * 1024 * 1024; // 20MB chunks
+        } else {
+            CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks for smaller files
+        }
+        
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         const uploadId = generateUploadId();
         
-        console.log(`Starting upload: ${file.name}, Size: ${(file.size / (1024 * 1024)).toFixed(1)}MB, Chunks: ${totalChunks}`);
+        console.log(`Starting upload: ${file.name}`);
+        console.log(`File size: ${(file.size / (1024 * 1024)).toFixed(1)}MB`);
+        console.log(`Chunk size: ${(CHUNK_SIZE / (1024 * 1024)).toFixed(0)}MB`);
+        console.log(`Total chunks: ${totalChunks}`);
         
         // Show simple progress
         showSimpleProgress('Initializing upload...', 0);
@@ -216,7 +228,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             // Upload chunks concurrently with limited parallelism
-            const maxConcurrentUploads = 6; // Limit concurrent uploads to avoid overwhelming server
+            const maxConcurrentUploads = Math.min(6, totalChunks); // Don't exceed available chunks
             let completedChunks = 0;
             
             // Create array of chunk upload promises
@@ -242,9 +254,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     await uploadSingleChunk(file, chunkIndex, CHUNK_SIZE, uploadId);
                     completedChunks++;
                     
-                    // Update progress
+                    // Update progress with better messaging
                     const progress = Math.round((completedChunks / totalChunks) * 85);
-                    showSimpleProgress(`Uploading... ${completedChunks}/${totalChunks} chunks`, progress);
+                    const chunkSizeMB = (CHUNK_SIZE / (1024 * 1024)).toFixed(0);
+                    showSimpleProgress(`Uploading ${chunkSizeMB}MB chunks... ${completedChunks}/${totalChunks}`, progress);
                     
                 } finally {
                     // Free the slot
