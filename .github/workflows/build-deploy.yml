@@ -3,6 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches: [ dev, main ]
+  workflow_dispatch: # Allow manual triggering
 
 jobs:
   build-deploy:
@@ -15,34 +16,52 @@ jobs:
       - name: Install Tailscale
         uses: tailscale/github-action@v2
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
           tags: tag:ci
       
       - name: SSH to server and deploy
         env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
         run: |
           # Setup SSH key
           mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+          ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
           
           # SSH to server and deploy
-          ssh -i ~/.ssh/id_rsa $SSH_USER@$SERVER_HOST << 'EOF'
-            cd /path/to/clipSummary  # Update this path
+          ssh -i ~/.ssh/id_rsa $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+            set -e
+            
+            # Navigate to deployment directory
+            cd ${{ secrets.DEPLOY_DIR }}
             
             # Pull latest changes
+            git fetch origin
+            git checkout ${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
+            # Stop existing containers
+            docker-compose down || true
+            
             # Build and deploy with docker-compose
-            docker-compose down
             docker-compose build --no-cache
             docker-compose up -d
             
-            # Optional: Clean up old images
-            docker system prune -f
+            # Wait for services to start
+            echo "Waiting for services to start..."
+            sleep 30
+            
+            # Check if services are running
+            docker-compose ps
+            
+            # Show recent logs for debugging
+            echo "=== Recent logs (last 30 lines) ==="
+            docker-compose logs --tail=30
+            
+            echo "Deployment completed successfully!"
           EOF
