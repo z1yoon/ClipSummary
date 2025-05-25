@@ -5,7 +5,7 @@ import os
 import json
 import time
 from utils.helpers import get_video_metadata
-from ai.translator import translate_text, translate_summary, translate_subtitle_segments, get_supported_languages
+from ai.translator import translate_text, translate_summary, translate_subtitle_segments, translate_video_content_unified, get_supported_languages
 from utils.cache import get_cached_result, cache_result
 from api.auth import get_current_user
 
@@ -679,7 +679,7 @@ async def translate_video_content(
     target_language: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """Translate both summary and subtitles to target language (Chinese or Korean)"""
+    """Translate both summary and subtitles to target language using unified approach"""
     try:
         # Validate target language
         supported_langs = get_supported_languages()
@@ -707,32 +707,63 @@ async def translate_video_content(
         with open(result_path, "r") as f:
             result_data = json.load(f)
         
+        # Verify user ownership
+        video_user_id = result_data.get("user_id")
+        current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
+        
+        if str(video_user_id) != str(current_user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this video"
+            )
+        
         # Check if translation already exists
         if "translations" in result_data and target_language in result_data["translations"]:
             return {
                 "video_id": video_id,
                 "target_language": target_language,
+                "language_name": supported_langs[target_language],
                 "status": "already_exists",
-                "message": f"Translation to {supported_langs[target_language]} already exists"
+                "message": f"Translation to {supported_langs[target_language]} already exists",
+                "summary": result_data["translations"][target_language].get("summary"),
+                "transcript_segments": len(result_data["translations"][target_language].get("transcript", []))
             }
+        
+        # Get English content for translation
+        en_summary = result_data.get("summary", {}).get("en")
+        if not en_summary:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="English summary not found for translation"
+            )
+        
+        en_segments = []
+        if "transcript" in result_data and "segments" in result_data["transcript"]:
+            en_segments = result_data["transcript"]["segments"]
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="English transcript not found for translation"
+            )
+        
+        # Use unified translation function
+        translation_result = translate_video_content_unified(
+            summary_text=en_summary,
+            segments=en_segments,
+            target_lang=target_language,
+            upload_id=video_id
+        )
         
         # Initialize translations structure
         if "translations" not in result_data:
             result_data["translations"] = {}
-        if target_language not in result_data["translations"]:
-            result_data["translations"][target_language] = {}
         
-        # Translate summary
-        en_summary = result_data.get("summary", {}).get("en")
-        if en_summary:
-            translated_summary = translate_summary(en_summary, target_language, video_id)
-            result_data["translations"][target_language]["summary"] = translated_summary
-        
-        # Translate subtitles
-        if "transcript" in result_data and "segments" in result_data["transcript"]:
-            en_segments = result_data["transcript"]["segments"]
-            translated_segments = translate_subtitle_segments(en_segments, target_language, video_id)
-            result_data["translations"][target_language]["transcript"] = translated_segments
+        # Store the unified translation result
+        result_data["translations"][target_language] = {
+            "summary": translation_result["summary"],
+            "transcript": translation_result["transcript"],
+            "translation_stats": translation_result["translation_stats"]
+        }
         
         # Save updated result
         with open(result_path, "w") as f:
@@ -742,22 +773,24 @@ async def translate_video_content(
         subtitle_path = f"uploads/{video_id}/subtitles/{target_language}.json"
         os.makedirs(os.path.dirname(subtitle_path), exist_ok=True)
         
-        if target_language in result_data["translations"] and "transcript" in result_data["translations"][target_language]:
-            subtitle_data = {
-                "segments": result_data["translations"][target_language]["transcript"],
-                "language": target_language
-            }
-            with open(subtitle_path, "w") as f:
-                json.dump(subtitle_data, f, ensure_ascii=False, indent=2)
+        subtitle_data = {
+            "segments": translation_result["transcript"],
+            "language": target_language
+        }
+        with open(subtitle_path, "w") as f:
+            json.dump(subtitle_data, f, ensure_ascii=False, indent=2)
         
         return {
             "video_id": video_id,
             "target_language": target_language,
             "language_name": supported_langs[target_language],
             "status": "completed",
-            "summary_translated": bool(en_summary),
-            "subtitles_translated": "transcript" in result_data,
-            "message": f"Successfully translated to {supported_langs[target_language]}"
+            "summary_translated": True,
+            "subtitles_translated": True,
+            "summary": translation_result["summary"],
+            "transcript_segments": len(translation_result["transcript"]),
+            "translation_stats": translation_result["translation_stats"],
+            "message": f"Successfully translated both summary and transcript to {supported_langs[target_language]}"
         }
         
     except HTTPException:

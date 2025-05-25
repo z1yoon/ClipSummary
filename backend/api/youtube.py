@@ -17,7 +17,7 @@ from pathlib import Path
 # Change relative imports to absolute imports
 from ai.whisperx import transcribe_audio
 from ai.summarizer import generate_summary
-from ai.translator import translate_text
+from ai.translator import translate_text, translate_video_content_unified
 from utils.cache import get_cached_result, cache_result
 from api.auth import get_current_user
 
@@ -496,7 +496,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             "source": "audio_download"
         }
         
-        # Translate to requested languages
+        # Translate to requested languages using unified approach
         translation_languages = [lang for lang in languages if lang != "en"]
         if len(translation_languages) > 0:
             update_youtube_status(
@@ -514,18 +514,20 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
                     message=f"Translating to {lang} ({i+1}/{len(translation_languages)})..."
                 )
                 
+                # Use unified translation function
+                translation_result = translate_video_content_unified(
+                    summary_text=summary,
+                    segments=transcript["segments"],
+                    target_lang=lang,
+                    upload_id=processing_id
+                )
+                
                 result["translations"][lang] = {
-                    "summary": translate_text(summary, target_lang=lang, upload_id=processing_id),
-                    "transcript": [
-                        {
-                            "start": segment["start"],
-                            "end": segment["end"],
-                            "text": translate_text(segment["text"], target_lang=lang, upload_id=processing_id)
-                        }
-                        for segment in transcript["segments"]
-                    ]
+                    "summary": translation_result["summary"],
+                    "transcript": translation_result["transcript"],
+                    "translation_stats": translation_result["translation_stats"]
                 }
-                print(f"✅ Translation to {lang} completed")
+                print(f"✅ Unified translation to {lang} completed")
         
         update_youtube_status(
             status="processing",

@@ -25,7 +25,7 @@ class TestIntegrationFlow:
     @patch('api.upload.process_uploaded_video')
     @patch('utils.cache.update_processing_status')
     def test_video_processing_flow(self, mock_update_status, mock_process, 
-                                  client, temp_video_file):
+                                  authenticated_client, temp_video_file, mock_redis):
         """Test the complete video processing flow."""
         # Mock the background task
         def mock_background_task(background_tasks, func, *args, **kwargs):
@@ -37,7 +37,7 @@ class TestIntegrationFlow:
             test_filename = os.path.basename(temp_video_file)
             
             with open(temp_video_file, 'rb') as f:
-                response = client.post(
+                response = authenticated_client.post(
                     "/api/upload/video",
                     files={"file": (test_filename, f, "video/mp4")},
                     data={"languages": "en,ko", "summary_length": "3"}
@@ -50,61 +50,63 @@ class TestIntegrationFlow:
             assert "upload_id" in data
             
             # Mock successful processing result for status check
-            with patch('utils.cache.get_cached_result') as mock_cache:
-                mock_cache.return_value = {
-                    "status": "completed",
-                    "upload_id": data["upload_id"],
-                    "progress": 100,
-                    "message": "Processing completed successfully.",
-                    "updated_at": 1234567890
-                }
-                
-                # Check status endpoint
-                status_response = client.get(f"/api/upload/status/{data['upload_id']}")
-                assert status_response.status_code == 200
-                assert status_response.json()["status"] == "completed"
+            mock_status = {
+                "status": "completed",
+                "upload_id": data["upload_id"],
+                "progress": 100,
+                "message": "Processing completed successfully.",
+                "updated_at": 1234567890
+            }
+            mock_redis.get.return_value = json.dumps(mock_status)
+            
+            # Check status endpoint
+            status_response = authenticated_client.get(f"/api/upload/status/{data['upload_id']}")
+            assert status_response.status_code == 200
+            assert status_response.json()["status"] == "completed"
             
             # Mock result data
-            with patch('utils.cache.get_cached_result') as mock_result_cache:
-                mock_result_cache.return_value = {
-                    "upload_id": data["upload_id"],
-                    "filename": test_filename,
-                    "transcript": {
-                        "segments": [
+            mock_result = {
+                "upload_id": data["upload_id"],
+                "filename": test_filename,
+                "transcript": {
+                    "segments": [
+                        {
+                            "start": 0,
+                            "end": 5,
+                            "text": "This is a test transcription."
+                        }
+                    ]
+                },
+                "summary": {
+                    "en": "Test summary of the video."
+                },
+                "translations": {
+                    "ko": {
+                        "summary": "번역된 요약.",
+                        "transcript": [
                             {
                                 "start": 0,
                                 "end": 5,
-                                "text": "This is a test transcription."
+                                "text": "번역된 대본입니다."
                             }
                         ]
-                    },
-                    "summary": {
-                        "en": "Test summary of the video."
-                    },
-                    "translations": {
-                        "ko": {
-                            "summary": "번역된 요약.",
-                            "transcript": [
-                                {
-                                    "start": 0,
-                                    "end": 5,
-                                    "text": "번역된 대본입니다."
-                                }
-                            ]
-                        }
                     }
                 }
-                
-                # Check result endpoint
-                result_response = client.get(f"/api/upload/result/{data['upload_id']}")
-                assert result_response.status_code == 200
-                result_data = result_response.json()
-                assert "transcript" in result_data
-                assert "summary" in result_data
-                assert "translations" in result_data
-                assert "ko" in result_data["translations"]
-                assert result_data["summary"]["en"] == "Test summary of the video."
-                assert result_data["translations"]["ko"]["summary"] == "번역된 요약."
+            }
+            
+            # Mock the Redis response for result endpoint
+            mock_redis.get.return_value = json.dumps(mock_result)
+            
+            # Check result endpoint
+            result_response = authenticated_client.get(f"/api/upload/result/{data['upload_id']}")
+            assert result_response.status_code == 200
+            result_data = result_response.json()
+            assert "transcript" in result_data
+            assert "summary" in result_data
+            assert "translations" in result_data
+            assert "ko" in result_data["translations"]
+            assert result_data["summary"]["en"] == "Test summary of the video."
+            assert result_data["translations"]["ko"]["summary"] == "번역된 요약."
 
 class TestVideoProcessing:
     """Integration tests for the end-to-end video processing workflow."""
@@ -121,7 +123,8 @@ class TestVideoProcessing:
         mock_summarize, 
         mock_transcribe, 
         mock_process_video,
-        client
+        authenticated_client,
+        mock_redis
     ):
         """Test the complete video processing flow from upload to final result."""
         # Mock transcription result
@@ -159,7 +162,7 @@ class TestVideoProcessing:
         with patch('fastapi.BackgroundTasks.add_task', side_effect=mock_background_task):
             # Step 1: Upload a test video
             test_file_content = b"test video content"
-            response = client.post(
+            response = authenticated_client.post(
                 "/api/upload/video",
                 files={"file": ("integration_test.mp4", test_file_content, "video/mp4")},
                 data={"languages": "en,ko", "summary_length": "3"}
@@ -172,36 +175,35 @@ class TestVideoProcessing:
             assert "upload_id" in data
             
             # Step 2: Simulate getting results
-            with patch('utils.cache.get_cached_result') as mock_get_result:
-                # Create mock result data
-                result_data = {
-                    "upload_id": data["upload_id"],
-                    "filename": "integration_test.mp4",
-                    "transcript": mock_transcription,
-                    "summary": {"en": mock_summary},
-                    "translations": {
-                        "ko": {
-                            "summary": mock_translation,
-                            "transcript": mock_transcription["segments"]
-                        }
-                    },
-                    "status": "completed"
-                }
-                mock_get_result.return_value = result_data
-                
-                # Request results
-                results_response = client.get(f"/api/upload/result/{data['upload_id']}")
-                
-                # Verify results
-                assert results_response.status_code == 200
-                result_json = results_response.json()
-                assert result_json["status"] == "completed"
-                assert result_json["summary"]["en"] == mock_summary
-                assert result_json["translations"]["ko"]["summary"] == mock_translation
+            # Create mock result data
+            result_data = {
+                "upload_id": data["upload_id"],
+                "filename": "integration_test.mp4",
+                "transcript": mock_transcription,
+                "summary": {"en": mock_summary},
+                "translations": {
+                    "ko": {
+                        "summary": mock_translation,
+                        "transcript": mock_transcription["segments"]
+                    }
+                },
+                "status": "completed"
+            }
+            mock_redis.get.return_value = json.dumps(result_data)
+            
+            # Request results
+            results_response = authenticated_client.get(f"/api/upload/result/{data['upload_id']}")
+            
+            # Verify results
+            assert results_response.status_code == 200
+            result_json = results_response.json()
+            assert result_json["status"] == "completed"
+            assert result_json["summary"]["en"] == mock_summary
+            assert result_json["translations"]["ko"]["summary"] == mock_translation
             
     @patch('api.youtube.process_youtube_video')
     @patch('utils.cache.update_processing_status')
-    def test_youtube_processing_integration(self, mock_update_status, mock_process, client):
+    def test_youtube_processing_integration(self, mock_update_status, mock_process, authenticated_client):
         """Test the integration of YouTube video processing."""
         # Mock the background task
         def mock_background_task(background_tasks, func, *args, **kwargs):
@@ -210,7 +212,7 @@ class TestVideoProcessing:
         
         with patch('fastapi.BackgroundTasks.add_task', side_effect=mock_background_task):
             # Request YouTube processing
-            response = client.post(
+            response = authenticated_client.post(
                 "/api/youtube/process",
                 json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}
             )

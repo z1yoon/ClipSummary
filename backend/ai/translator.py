@@ -271,3 +271,116 @@ def get_supported_languages() -> Dict[str, str]:
         'zh': 'Chinese',
         'ko': 'Korean'
     }
+
+def translate_video_content_unified(summary_text: str, segments: List[dict], target_lang: str, upload_id: str = None) -> dict:
+    """Translate both summary and transcript segments together with unified progress tracking."""
+    try:
+        logger.info(f"[{upload_id}] Starting unified translation to {target_lang}")
+        logger.info(f"[{upload_id}] - Summary length: {len(summary_text)} characters")
+        logger.info(f"[{upload_id}] - Transcript segments: {len(segments)}")
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=60,
+                message=f"Translating content to {target_lang}..."
+            )
+        
+        # Step 1: Translate summary first (20% of translation progress)
+        logger.info(f"[{upload_id}] Translating summary...")
+        translated_summary = translate_text(summary_text, target_lang, upload_id)
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=70,
+                message=f"Summary translated to {target_lang}. Translating transcript..."
+            )
+        
+        # Step 2: Translate transcript segments (80% of translation progress)
+        logger.info(f"[{upload_id}] Translating {len(segments)} transcript segments...")
+        
+        # Extract texts for batch translation
+        texts = [segment.get('text', '') for segment in segments]
+        
+        # Batch translate with progress tracking
+        translated_texts = []
+        batch_size = 10  # Process in batches for better progress tracking
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        
+        for batch_idx in range(total_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, len(texts))
+            batch_texts = texts[start_idx:end_idx]
+            
+            # Translate batch
+            batch_translated = []
+            for i, text in enumerate(batch_texts):
+                segment_idx = start_idx + i + 1
+                translated = translate_text(
+                    text, 
+                    target_lang, 
+                    upload_id=upload_id,
+                    segment_index=segment_idx,
+                    total_segments=len(texts)
+                )
+                batch_translated.append(translated)
+            
+            translated_texts.extend(batch_translated)
+            
+            # Update progress
+            if upload_id:
+                progress = 70 + ((batch_idx + 1) / total_batches) * 25
+                update_processing_status(
+                    upload_id=upload_id,
+                    status="processing",
+                    progress=progress,
+                    message=f"Translating transcript to {target_lang} ({end_idx}/{len(texts)} segments)..."
+                )
+        
+        # Create translated segments
+        translated_segments = []
+        for i, segment in enumerate(segments):
+            translated_segment = segment.copy()
+            translated_segment['text'] = translated_texts[i]
+            translated_segments.append(translated_segment)
+        
+        # Create unified result
+        result = {
+            "summary": translated_summary,
+            "transcript": translated_segments,
+            "language": target_lang,
+            "translation_stats": {
+                "summary_length": len(translated_summary),
+                "transcript_segments": len(translated_segments),
+                "total_transcript_chars": sum(len(seg['text']) for seg in translated_segments)
+            }
+        }
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=95,
+                message=f"Translation to {target_lang} completed successfully!"
+            )
+        
+        logger.info(f"[{upload_id}] Unified translation completed:")
+        logger.info(f"[{upload_id}] - Summary: {len(translated_summary)} characters")
+        logger.info(f"[{upload_id}] - Transcript: {len(translated_segments)} segments")
+        
+        return result
+        
+    except Exception as e:
+        error_msg = f"Unified translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="error",
+                progress=0,
+                message=error_msg
+            )
+        raise RuntimeError(error_msg)
