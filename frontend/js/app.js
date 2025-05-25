@@ -302,32 +302,17 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             localStorage.setItem(`upload_progress_${uploadData.upload_id}`, JSON.stringify(uploadProgress));
 
-            // Step 2: Upload directly to Azure Blob Storage
+            // Step 2: Upload directly to Azure Blob Storage with progress tracking
             showProcessingStatus({
                 status: 'uploading',
-                progress: 50,
-                message: `Uploading ${file.name} directly to secure cloud storage...`
+                progress: 10,
+                message: `Starting upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB) to secure cloud storage...`
             });
 
-            const uploadResponse = await fetch(uploadData.upload_url, {
-                method: uploadData.upload_method,
-                headers: uploadData.headers,
-                body: file
-            });
-
-            if (!uploadResponse.ok) {
-                const errorText = await uploadResponse.text();
-                console.error('Azure upload failed:', {
-                    status: uploadResponse.status,
-                    statusText: uploadResponse.statusText,
-                    headers: Object.fromEntries(uploadResponse.headers.entries()),
-                    body: errorText,
-                    uploadUrl: uploadData.upload_url.split('?')[0] // Log URL without SAS token
-                });
-                throw new Error(`Upload to cloud storage failed: ${uploadResponse.status} - ${uploadResponse.statusText || errorText}`);
-            }
-
-            console.log('File uploaded successfully to Azure Blob Storage');
+            // Use XMLHttpRequest for upload progress tracking
+            const uploadResult = await uploadToAzureWithProgress(uploadData, file);
+            
+            console.log('File uploaded successfully to Azure Blob Storage:', uploadResult);
 
             // Step 3: Confirm upload completion
             showProcessingStatus({
@@ -377,6 +362,116 @@ document.addEventListener('DOMContentLoaded', function() {
             
             showError(`Upload failed: ${error.message}`);
         }
+    }
+
+    function uploadToAzureWithProgress(uploadData, file) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            
+            // Track upload progress
+            xhr.upload.addEventListener('progress', (event) => {
+                if (event.lengthComputable) {
+                    const percentComplete = (event.loaded / event.total) * 100;
+                    const uploadedMB = (event.loaded / (1024 * 1024)).toFixed(2);
+                    const totalMB = (event.total / (1024 * 1024)).toFixed(2);
+                    const speedMBps = calculateUploadSpeed(event.loaded);
+                    
+                    // Progress ranges from 10% to 90% during upload
+                    const adjustedProgress = 10 + (percentComplete * 0.8); // Maps 0-100% to 10-90%
+                    
+                    showProcessingStatus({
+                        status: 'uploading',
+                        progress: adjustedProgress,
+                        message: `Uploading ${file.name}: ${uploadedMB}MB / ${totalMB}MB (${percentComplete.toFixed(1)}%) ${speedMBps ? `at ${speedMBps} MB/s` : ''}`
+                    });
+                }
+            });
+            
+            // Handle upload completion
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    showProcessingStatus({
+                        status: 'uploaded',
+                        progress: 90,
+                        message: `Upload completed successfully! Verifying file integrity...`
+                    });
+                    resolve({
+                        status: xhr.status,
+                        statusText: xhr.statusText,
+                        response: xhr.response
+                    });
+                } else {
+                    const errorDetails = {
+                        status: xhr.status,
+                        statusText: xhr.statusText,
+                        response: xhr.responseText,
+                        uploadUrl: uploadData.upload_url.split('?')[0] // Log URL without SAS token
+                    };
+                    console.error('Azure upload failed:', errorDetails);
+                    reject(new Error(`Upload to cloud storage failed: ${xhr.status} - ${xhr.statusText || xhr.responseText}`));
+                }
+            });
+            
+            // Handle upload errors
+            xhr.addEventListener('error', () => {
+                console.error('Azure upload network error:', {
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                    response: xhr.responseText
+                });
+                reject(new Error('Network error during upload to cloud storage'));
+            });
+            
+            // Handle upload timeout
+            xhr.addEventListener('timeout', () => {
+                reject(new Error('Upload to cloud storage timed out'));
+            });
+            
+            // Configure the request
+            xhr.open(uploadData.upload_method, uploadData.upload_url);
+            
+            // Set required headers for Azure Blob Storage
+            Object.entries(uploadData.headers).forEach(([key, value]) => {
+                xhr.setRequestHeader(key, value);
+            });
+            
+            // Set timeout (2 hours for large files)
+            xhr.timeout = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+            
+            // Start the upload
+            xhr.send(file);
+        });
+    }
+
+    // Upload speed calculation helper
+    let uploadStartTime = null;
+    let lastUploadedBytes = 0;
+    let lastUploadTime = null;
+
+    function calculateUploadSpeed(uploadedBytes) {
+        const now = Date.now();
+        
+        if (!uploadStartTime) {
+            uploadStartTime = now;
+            lastUploadedBytes = uploadedBytes;
+            lastUploadTime = now;
+            return null;
+        }
+        
+        // Calculate speed based on recent progress (last 2 seconds)
+        const timeDiff = now - lastUploadTime;
+        if (timeDiff >= 2000) { // Update speed every 2 seconds
+            const bytesDiff = uploadedBytes - lastUploadedBytes;
+            const speedBps = bytesDiff / (timeDiff / 1000); // bytes per second
+            const speedMBps = (speedBps / (1024 * 1024)).toFixed(1); // MB per second
+            
+            lastUploadedBytes = uploadedBytes;
+            lastUploadTime = now;
+            
+            return speedMBps;
+        }
+        
+        return null;
     }
 
     // YouTube URL processing
