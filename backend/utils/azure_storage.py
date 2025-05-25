@@ -31,12 +31,37 @@ class AzureBlobStorage:
         if not self.account_name or not self.account_key:
             raise ValueError("Could not extract account name and key from connection string")
         
+        # Configure CORS for direct browser uploads
+        self._configure_cors()
+        
         # Create container if it doesn't exist
         try:
             self.blob_service_client.create_container(self.container_name)
             logger.info(f"Created container: {self.container_name}")
         except Exception:
             logger.info(f"Container {self.container_name} already exists")
+    
+    def _configure_cors(self):
+        """Configure CORS settings for Azure Blob Storage to allow direct browser uploads"""
+        try:
+            from azure.storage.blob import CorsRule
+            
+            # Define CORS rule for browser uploads
+            cors_rule = CorsRule(
+                allowed_origins=['*'],  # In production, specify your domain
+                allowed_methods=['PUT', 'POST', 'GET', 'HEAD', 'OPTIONS'],
+                allowed_headers=['*'],
+                exposed_headers=['*'],
+                max_age_in_seconds=3600
+            )
+            
+            # Set CORS rules
+            self.blob_service_client.set_service_properties(cors=[cors_rule])
+            logger.info("CORS configured for Azure Blob Storage")
+            
+        except Exception as e:
+            logger.warning(f"Failed to configure CORS (this might be normal): {str(e)}")
+            # Continue without CORS - it might already be configured or not needed
     
     def generate_upload_url(self, upload_id: str, filename: str, expiry_hours: int = 1) -> dict:
         """Generate a signed URL for direct upload to Azure Blob Storage"""

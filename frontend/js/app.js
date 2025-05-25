@@ -317,7 +317,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (!uploadResponse.ok) {
                 const errorText = await uploadResponse.text();
-                throw new Error(`Upload to cloud storage failed: ${uploadResponse.status} - ${errorText}`);
+                console.error('Azure upload failed:', {
+                    status: uploadResponse.status,
+                    statusText: uploadResponse.statusText,
+                    headers: Object.fromEntries(uploadResponse.headers.entries()),
+                    body: errorText,
+                    uploadUrl: uploadData.upload_url.split('?')[0] // Log URL without SAS token
+                });
+                throw new Error(`Upload to cloud storage failed: ${uploadResponse.status} - ${uploadResponse.statusText || errorText}`);
             }
 
             console.log('File uploaded successfully to Azure Blob Storage');
