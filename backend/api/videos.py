@@ -697,6 +697,8 @@ async def translate_video_content(
             )
         
         result_path = f"uploads/{video_id}/result.json"
+        info_path = f"uploads/{video_id}/info.json"
+        
         if not os.path.exists(result_path):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -707,9 +709,24 @@ async def translate_video_content(
         with open(result_path, "r") as f:
             result_data = json.load(f)
         
-        # Verify user ownership
+        # Verify user ownership - check both result.json and info.json
         video_user_id = result_data.get("user_id")
         current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
+        
+        # If user_id is not in result.json, check info.json
+        if video_user_id is None and os.path.exists(info_path):
+            try:
+                with open(info_path, "r") as f:
+                    info_data = json.load(f)
+                video_user_id = info_data.get("user_id")
+            except Exception as e:
+                print(f"Error reading info.json: {str(e)}")
+        
+        if video_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unable to verify video ownership"
+            )
         
         if str(video_user_id) != str(current_user_id):
             raise HTTPException(
@@ -764,6 +781,10 @@ async def translate_video_content(
             "transcript": translation_result["transcript"],
             "translation_stats": translation_result["translation_stats"]
         }
+        
+        # Add user_id to result_data if it's missing (for future requests)
+        if "user_id" not in result_data and video_user_id is not None:
+            result_data["user_id"] = video_user_id
         
         # Save updated result
         with open(result_path, "w") as f:
