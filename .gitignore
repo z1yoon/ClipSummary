@@ -1,2 +1,5 @@
 .env
 uploads/
+models/
+.models
+venv/
