@@ -67,11 +67,12 @@ class TestAPI:
         """Test the upload status endpoint."""
         # Mock cached status
         mock_status = {
-            "status": "processing",
+            "status": "completed",
             "upload_id": "test-123456",
-            "progress": 50,
-            "message": "Processing video...",
-            "updated_at": 1234567890
+            "progress": 100,
+            "message": "Processing completed",
+            "updated_at": 1234567890,
+            "result_url": "/api/upload/result/test-123456"
         }
         mock_redis.get.return_value = json.dumps(mock_status)
         
@@ -104,9 +105,15 @@ class TestAPI:
 class TestCacheModule:
     """Unit tests for the cache module."""
     
-    def test_cache_result(self, mock_redis):
+    @patch('utils.cache.get_redis_client')
+    def test_cache_result(self, mock_get_redis):
         """Test caching functionality."""
         from utils.cache import cache_result
+        
+        # Mock Redis client
+        mock_redis = MagicMock()
+        mock_redis.setex.return_value = True
+        mock_get_redis.return_value = mock_redis
         
         # Test data
         test_data = {"test": "data"}
@@ -118,12 +125,15 @@ class TestCacheModule:
         assert result is True
         mock_redis.setex.assert_called_once()
     
-    def test_get_cached_result(self, mock_redis):
+    @patch('utils.cache.get_redis_client')
+    def test_get_cached_result(self, mock_get_redis):
         """Test retrieving cached results."""
         from utils.cache import get_cached_result
         
-        # Mock Redis client response
+        # Mock Redis client
+        mock_redis = MagicMock()
         mock_redis.get.return_value = '{"test": "data"}'
+        mock_get_redis.return_value = mock_redis
         
         # Call the function
         result = get_cached_result("test_key")
@@ -132,9 +142,15 @@ class TestCacheModule:
         assert result == {"test": "data"}
         mock_redis.get.assert_called_once_with("test_key")
     
-    def test_update_processing_status(self, mock_file_operations, mock_redis):
+    @patch('utils.cache.get_redis_client')
+    def test_update_processing_status(self, mock_get_redis, mock_file_operations):
         """Test updating processing status."""
         from utils.cache import update_processing_status
+        
+        # Mock Redis client
+        mock_redis = MagicMock()
+        mock_redis.setex.return_value = True
+        mock_get_redis.return_value = mock_redis
         
         # Call the function
         result = update_processing_status(

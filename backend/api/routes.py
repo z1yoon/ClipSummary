@@ -6,6 +6,12 @@ from api.auth import router as auth_router
 
 router = APIRouter()
 
+# Health check endpoint for tests
+@router.get("/health")
+def health_check():
+    """Health check endpoint"""
+    return {"status": "ok"}
+
 # Include sub-routers
 router.include_router(youtube_router, prefix="/youtube", tags=["YouTube"])
 router.include_router(upload_router, prefix="/upload", tags=["Video Upload"])

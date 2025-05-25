@@ -71,24 +71,13 @@ class TestAIModules:
 class TestSummarizer:
     """Unit tests for the summarizer module."""
     
-    @patch('ai.summarizer.BartForConditionalGeneration.from_pretrained')
-    @patch('ai.summarizer.BartTokenizer.from_pretrained')
-    def test_generate_summary(self, mock_tokenizer, mock_model):
+    @patch('ai.summarizer.pipeline')
+    def test_generate_summary(self, mock_pipeline):
         """Test the summarizer function."""
-        # Mock the tokenizer
-        mock_tokenizer_instance = MagicMock()
-        mock_tokenizer_instance.return_value = {
-            "input_ids": MagicMock(),
-            "attention_mask": MagicMock()
-        }
-        mock_tokenizer_instance.decode.return_value = "This is a test summary."
-        mock_tokenizer.return_value = mock_tokenizer_instance
-        
-        # Mock the model
-        mock_model_instance = MagicMock()
-        mock_model_instance.generate.return_value = [MagicMock()]
-        mock_model_instance.parameters.return_value = [MagicMock()]
-        mock_model.return_value.to.return_value = mock_model_instance
+        # Mock the summarization pipeline
+        mock_summarizer = MagicMock()
+        mock_summarizer.return_value = [{"summary_text": "This is a test summary."}]
+        mock_pipeline.return_value = mock_summarizer
         
         # Test the summarizer
         transcript = "This is a test transcript. It contains multiple sentences. We want to summarize it."
@@ -96,35 +85,18 @@ class TestSummarizer:
         
         # Assertions
         assert summary == "This is a test summary."
-        mock_tokenizer.assert_called_once()
-        mock_model.assert_called_once()
+        mock_pipeline.assert_called_once()
 
 class TestTranslator:
     """Unit tests for the translator module."""
     
-    @patch('ai.translator.AutoModelForSeq2SeqLM.from_pretrained')
-    @patch('ai.translator.AutoTokenizer.from_pretrained')
-    @patch('ai.translator.get_model_path')
-    def test_translate_text(self, mock_get_path, mock_tokenizer, mock_model):
+    @patch('ai.translator.pipeline')
+    def test_translate_text(self, mock_pipeline):
         """Test the translate function."""
-        # Mock the model path
-        mock_get_path.return_value = "/fake/model/path"
-        
-        # Mock the tokenizer
-        mock_tokenizer_instance = MagicMock()
-        mock_tokenizer_instance.return_value = {
-            "input_ids": MagicMock(),
-            "attention_mask": MagicMock()
-        }
-        mock_tokenizer_instance.batch_decode.return_value = ["번역된 텍스트"]
-        mock_tokenizer_instance.get_lang_id.return_value = 123
-        mock_tokenizer.return_value = mock_tokenizer_instance
-        
-        # Mock the model
-        mock_model_instance = MagicMock()
-        mock_model_instance.generate.return_value = [MagicMock()]
-        mock_model_instance.parameters.return_value = [MagicMock()]
-        mock_model.return_value.to.return_value = mock_model_instance
+        # Mock the translation pipeline
+        mock_translator = MagicMock()
+        mock_translator.return_value = [{"translation_text": "번역된 텍스트"}]
+        mock_pipeline.return_value = mock_translator
         
         # Test the translator
         text = "This is text to translate"
@@ -132,8 +104,7 @@ class TestTranslator:
         
         # Assertions
         assert translated == "번역된 텍스트"
-        mock_tokenizer.assert_called_once()
-        mock_model.assert_called_once()
+        mock_pipeline.assert_called_once()
 
 class TestWhisperX:
     """Unit tests for the WhisperX transcription module."""
