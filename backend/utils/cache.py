@@ -175,9 +175,10 @@ def update_processing_status(
     try:
         status_data = {
             "status": status,
+            "upload_id": upload_id,
             "progress": float(progress),
             "message": message,
-            "timestamp": time.time(),
+            "updated_at": time.time(),
             "error": error
         }
         
@@ -189,8 +190,8 @@ def update_processing_status(
         with open(status_file, 'w') as f:
             json.dump(status_data, f)
         
-        # Also cache in Redis for faster access
-        cache_key = f"processing_status:{upload_id}"
+        # Use the same cache key format that the frontend expects
+        cache_key = f"upload:{upload_id}:status"
         cache_result(cache_key, status_data, ttl=3600)  # Cache for 1 hour
         
         return True
@@ -210,8 +211,8 @@ def get_processing_status(upload_id: str) -> Optional[Dict[str, Any]]:
         Status data if found, None otherwise
     """
     try:
-        # Try Redis cache first
-        cache_key = f"processing_status:{upload_id}"
+        # Try Redis cache first with the correct key format
+        cache_key = f"upload:{upload_id}:status"
         cached_status = get_cached_result(cache_key)
         if cached_status:
             return cached_status
