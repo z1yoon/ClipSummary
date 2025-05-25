@@ -3,3 +3,4 @@ uploads/
 models/
 .models
 venv/
+*.mp4
