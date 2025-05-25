@@ -174,11 +174,11 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=8000,
         reload=True,
         timeout_keep_alive=7200,  # 2 hour keep-alive
-        limit_concurrency=2,  # Limit concurrent uploads
-        backlog=4  # Small backlog for large file uploads
+        limit_concurrency=10,  # Increased from 2 to 10 to handle 6 concurrent uploads + buffer
+        backlog=12  # Increased backlog for better queuing
     )

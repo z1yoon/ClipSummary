@@ -320,8 +320,13 @@ document.addEventListener('DOMContentLoaded', function() {
         showProcessingStatus({
             status: 'uploading',
             progress: 0,
-            message: `Starting chunked upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB) - ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024))}MB each`
+            message: `Starting chunked upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB) - ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024))}MB each`,
+            uploadId: uploadId  // Add uploadId for cancel functionality
         });
+
+        // Store uploadId globally for cancel functionality
+        window.currentUploadId = uploadId;
+        window.currentUploadCanceled = false;
 
         try {
             // First, initialize the upload session
@@ -373,6 +378,11 @@ document.addEventListener('DOMContentLoaded', function() {
             const uploadChunkWithRetry = async (chunkIndex) => {
                 for (let attempt = 1; attempt <= maxRetries; attempt++) {
                     try {
+                        // Check if upload was canceled
+                        if (window.currentUploadCanceled) {
+                            throw new Error('Upload canceled by user');
+                        }
+                        
                         const result = await uploadChunk(file, chunkIndex, CHUNK_SIZE, uploadId, totalChunks);
                         return result;
                     } catch (error) {
@@ -395,6 +405,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 const activeUploads = new Set();
                 
                 while (chunkQueue.length > 0 || activeUploads.size > 0) {
+                    // Check if upload was canceled
+                    if (window.currentUploadCanceled) {
+                        throw new Error('Upload canceled by user');
+                    }
+                    
                     // Start new uploads up to the concurrent limit
                     while (activeUploads.size < maxConcurrent && chunkQueue.length > 0) {
                         const chunkIndex = chunkQueue.shift();
@@ -412,7 +427,8 @@ document.addEventListener('DOMContentLoaded', function() {
                                 showProcessingStatus({
                                     status: 'uploading',
                                     progress: progress,
-                                    message: `Uploading: ${completedChunks}/${totalChunks} chunks (${progress}%) - ${activeUploads.size} active uploads`
+                                    message: `Uploading: ${completedChunks}/${totalChunks} chunks (${progress}%) - ${activeUploads.size} active uploads`,
+                                    uploadId: uploadId
                                 });
                                 
                                 console.log(`✓ Chunk ${chunkIndex} completed (${completedChunks}/${totalChunks})`);
@@ -448,6 +464,11 @@ document.addEventListener('DOMContentLoaded', function() {
             // Execute the upload queue
             await processQueue();
 
+            // Check if upload was canceled
+            if (window.currentUploadCanceled) {
+                throw new Error('Upload canceled by user');
+            }
+
             // Check if any chunks failed permanently
             if (failedChunks.size > 0) {
                 throw new Error(`Upload failed: ${failedChunks.size} chunks could not be uploaded after retries`);
@@ -461,7 +482,8 @@ document.addEventListener('DOMContentLoaded', function() {
             showProcessingStatus({
                 status: 'uploading',
                 progress: 95,
-                message: 'Finalizing upload and starting processing...'
+                message: 'Finalizing upload and starting processing...',
+                uploadId: uploadId
             });
 
             const finalizeResponse = await fetch('/api/upload/finalize-chunked', {
@@ -492,17 +514,34 @@ document.addEventListener('DOMContentLoaded', function() {
                 message: 'Upload complete! Starting video processing...'
             });
 
+            // Clear cancel state
+            window.currentUploadId = null;
+            window.currentUploadCanceled = false;
+
             // Start tracking processing
             trackProcessing(response.upload_id || uploadId);
 
         } catch (error) {
             console.error('Chunked upload failed:', error);
             
+            // If upload was canceled, clean up on backend
+            if (window.currentUploadCanceled && window.currentUploadId) {
+                try {
+                    await cancelUpload(window.currentUploadId);
+                } catch (cancelError) {
+                    console.error('Failed to cancel upload on backend:', cancelError);
+                }
+            }
+            
             // Update progress - upload failed
             const uploadProgress = JSON.parse(localStorage.getItem(`upload_progress_${uploadId}`) || '{}');
             uploadProgress.status = 'failed';
             uploadProgress.error = error.message;
             localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
+            
+            // Clear cancel state
+            window.currentUploadId = null;
+            window.currentUploadCanceled = false;
             
             showError(`Upload failed: ${error.message}`);
         }
@@ -550,6 +589,114 @@ document.addEventListener('DOMContentLoaded', function() {
         return 'upload_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     }
 
+    // Function to cancel an ongoing upload
+    async function cancelUpload(uploadId) {
+        try {
+            const response = await fetch('/api/upload/cancel-chunked', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                },
+                body: JSON.stringify({
+                    upload_id: uploadId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to cancel upload: ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log('Upload canceled on backend:', result);
+            
+            // Clean up localStorage
+            localStorage.removeItem(`upload_progress_${uploadId}`);
+            
+            return result;
+        } catch (error) {
+            console.error('Error canceling upload:', error);
+            throw error;
+        }
+    }
+
+    // Function to handle upload cancellation
+    async function handleUploadCancel() {
+        if (window.currentUploadId && !window.currentUploadCanceled) {
+            window.currentUploadCanceled = true;
+            
+            showProcessingStatus({
+                status: 'canceling',
+                progress: 0,
+                message: 'Canceling upload and cleaning up...'
+            });
+            
+            try {
+                // Call the backend to cancel and clean up
+                const response = await fetch('/api/upload/cancel-chunked', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                    },
+                    body: JSON.stringify({
+                        upload_id: window.currentUploadId
+                    })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log('Upload canceled successfully:', result);
+                    
+                    // Also try to delete the video database entry if it was created
+                    try {
+                        const deleteResponse = await fetch(`/api/upload/video/${window.currentUploadId}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                            }
+                        });
+                        
+                        if (deleteResponse.ok) {
+                            console.log('Video database entry deleted successfully');
+                        }
+                    } catch (deleteError) {
+                        console.log('No video database entry to delete or deletion failed:', deleteError);
+                    }
+                    
+                    // Clean up localStorage
+                    localStorage.removeItem(`upload_progress_${window.currentUploadId}`);
+                    
+                    showProcessingStatus({
+                        status: 'canceled',
+                        progress: 0,
+                        message: 'Upload canceled and all data cleaned up successfully.'
+                    });
+                    
+                    // Hide the processing status after a delay
+                    setTimeout(() => {
+                        const processingStatus = document.getElementById('detailed-processing-status');
+                        if (processingStatus) {
+                            processingStatus.style.display = 'none';
+                        }
+                    }, 3000);
+                    
+                } else {
+                    throw new Error(`Failed to cancel upload: ${response.status}`);
+                }
+                
+            } catch (error) {
+                console.error('Error canceling upload:', error);
+                showError(`Failed to cancel upload: ${error.message}`);
+            } finally {
+                // Clear cancel state
+                window.currentUploadId = null;
+                window.currentUploadCanceled = false;
+            }
+        }
+    }
+
+    // Function to track video processing status
     function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
         let timeoutId = null;
@@ -673,6 +820,26 @@ document.addEventListener('DOMContentLoaded', function() {
         const progressPercent = Math.round(data.progress);
         progressBar.style.width = `${progressPercent}%`;
         
+        // Show/hide cancel button based on status
+        const actionsElement = document.getElementById('processing-actions');
+        const cancelBtn = document.getElementById('cancel-upload-btn');
+        
+        if (data.status === 'uploading' || data.status === 'finalizing' || data.uploadId) {
+            actionsElement.style.display = 'block';
+            
+            // Add click handler for cancel button (remove existing first)
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+            
+            newCancelBtn.addEventListener('click', async function() {
+                if (confirm('Are you sure you want to cancel this upload? This will delete any uploaded data and remove the video entry.')) {
+                    await handleUploadCancel();
+                }
+            });
+        } else {
+            actionsElement.style.display = 'none';
+        }
+        
         // Update elapsed time
         const elapsedTimeElement = detailedStatusElement.querySelector('.processing-elapsed');
         if (data.elapsedTime) {
@@ -703,6 +870,9 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (data.status === 'failed') {
             headerIcon.className = 'fas fa-exclamation-circle';
             headerText.textContent = 'Processing Failed';
+        } else if (data.status === 'canceling') {
+            headerIcon.className = 'fas fa-times-circle';
+            headerText.textContent = 'Canceling Upload';
         } else {
             headerIcon.className = 'fas fa-cog fa-spin';
             headerText.textContent = 'Processing Your Video';

@@ -937,6 +937,9 @@ class ChunkedUploadInit(BaseModel):
 class ChunkedUploadFinalize(BaseModel):
     upload_id: str
 
+class ChunkedUploadCancel(BaseModel):
+    upload_id: str
+
 # In-memory storage for chunked upload sessions
 chunked_uploads = {}
 
@@ -1241,4 +1244,67 @@ async def finalize_chunked_upload(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to finalize upload: {str(e)}"
+        )
+
+@router.post("/cancel-chunked")
+async def cancel_chunked_upload(
+    cancel_data: ChunkedUploadCancel,
+    current_user: dict = Depends(get_current_user)
+):
+    """Cancel a chunked upload and clean up resources."""
+    try:
+        upload_id = cancel_data.upload_id
+        
+        # Verify session exists
+        if upload_id not in chunked_uploads:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upload session not found or already completed"
+            )
+        
+        session = chunked_uploads[upload_id]
+        
+        # Verify user owns this upload
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+        
+        # Clean up uploaded chunks
+        chunks_dir = f"uploads/{upload_id}/chunks"
+        if os.path.exists(chunks_dir):
+            try:
+                shutil.rmtree(chunks_dir)
+                print(f"Removed chunks directory: {chunks_dir}")
+            except Exception as e:
+                print(f"Warning: Failed to remove chunks directory: {str(e)}")
+        
+        # Remove the upload directory if empty
+        upload_dir = f"uploads/{upload_id}"
+        if os.path.exists(upload_dir):
+            try:
+                os.rmdir(upload_dir)
+                print(f"Removed upload directory: {upload_dir}")
+            except Exception as e:
+                print(f"Warning: Failed to remove upload directory: {str(e)}")
+        
+        # Remove from in-memory session storage
+        if upload_id in chunked_uploads:
+            del chunked_uploads[upload_id]
+            print(f"Removed upload session from memory: {upload_id}")
+        
+        return {
+            "success": True,
+            "upload_id": upload_id,
+            "message": "Upload canceled and resources cleaned up"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error canceling chunked upload: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cancel upload: {str(e)}"
         )
