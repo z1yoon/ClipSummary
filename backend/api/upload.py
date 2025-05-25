@@ -1,15 +1,19 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, status, Request, Depends
 from fastapi.responses import JSONResponse
+from typing import List, Optional
+import asyncio
+import aiofiles
 import os
+import time
+import json
 import uuid
 import shutil
-import json
-import time
-import subprocess
-from typing import List, Optional
 import sqlite3
 import threading
+import traceback
 import logging
+import subprocess
+import ffmpeg
 
 # Change relative imports to absolute imports
 from ai.whisperx import transcribe_audio, load_models, asr_model, is_model_loading, wait_for_model
@@ -1019,7 +1023,7 @@ async def upload_chunk(
         # Write chunk asynchronously to prevent blocking other requests
         async with aiofiles.open(chunk_path, "wb") as f:
             await f.write(content)
-            await f.fsync()  # Ensure data is written to disk
+            # Note: aiofiles doesn't support fsync(), but the async write is sufficient
         
         # Mark chunk as received (this is thread-safe for basic operations)
         session["chunks_received"].add(chunk_index)
