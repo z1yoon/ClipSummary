@@ -687,50 +687,117 @@ async def process_uploaded_video(
             message=f"Extracting audio from video ({file_size/1024/1024:.2f} MB)..."
         )
         
-        # Extract audio from video
+        # Extract audio from video with enhanced error handling
         audio_path = f"uploads/{upload_id}/audio.wav"
         
         try:
+            print(f"[{upload_id}] Checking video for audio streams...")
+            
+            # First, probe the video to check if it has audio streams
+            try:
+                probe = ffmpeg.probe(processing_video_path)
+                audio_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'audio']
+                
+                if not audio_streams:
+                    print(f"[{upload_id}] No audio streams found in video")
+                    raise Exception("The uploaded video does not contain any audio tracks. Please upload a video with audio content for transcription and summarization.")
+                
+                print(f"[{upload_id}] Found {len(audio_streams)} audio stream(s)")
+                
+                # Log audio stream details for debugging
+                for i, stream in enumerate(audio_streams):
+                    codec = stream.get('codec_name', 'unknown')
+                    duration = stream.get('duration', 'unknown')
+                    print(f"[{upload_id}] Audio stream {i}: codec={codec}, duration={duration}")
+                
+            except ffmpeg.Error as probe_error:
+                print(f"[{upload_id}] FFmpeg probe failed: {str(probe_error)}")
+                # Continue with extraction attempt - probe might fail but extraction could work
+            
             print(f"[{upload_id}] Extracting audio to {audio_path}")
             
             # Try standard extraction first
-            (
-                ffmpeg
-                .input(processing_video_path)
-                .output(audio_path, acodec='pcm_s16le', ac=1, ar='16k')
-                .run(quiet=False, overwrite_output=True, capture_stderr=True)
-            )
-            print(f"[{upload_id}] Audio extraction completed successfully")
-        except ffmpeg.Error as e:
-            # Log the detailed error
-            error_message = e.stderr.decode() if e.stderr else str(e)
-            print(f"[{upload_id}] FFmpeg error details: {error_message}")
-            
-            # Try alternative extraction method with more compatible settings
             try:
-                print(f"[{upload_id}] Attempting alternative ffmpeg extraction method...")
-                subprocess.run([
-                    'ffmpeg',
-                    '-i', processing_video_path,
-                    '-vn',  # Disable video
-                    '-acodec', 'pcm_s16le',
-                    '-ar', '16000',
-                    '-ac', '1',
-                    '-y',  # Overwrite output files
-                    audio_path
-                ], check=True, capture_output=True)
-                print(f"[{upload_id}] Alternative extraction method succeeded")
-            except subprocess.CalledProcessError as sub_err:
-                error_output = sub_err.stderr.decode() if sub_err.stderr else str(sub_err)
-                print(f"[{upload_id}] Alternative extraction also failed: {error_output}")
-                raise Exception(f"Failed to extract audio: {error_output}")
+                (
+                    ffmpeg
+                    .input(processing_video_path)
+                    .output(audio_path, acodec='pcm_s16le', ac=1, ar='16k')
+                    .run(quiet=False, overwrite_output=True, capture_stderr=True)
+                )
+                print(f"[{upload_id}] Standard audio extraction completed successfully")
+            except ffmpeg.Error as e:
+                error_message = e.stderr.decode() if e.stderr else str(e)
+                print(f"[{upload_id}] Standard FFmpeg extraction failed: {error_message}")
+                
+                # Check for common "no audio" error patterns
+                no_audio_patterns = [
+                    "does not contain any stream",
+                    "Output file #0 does not contain any stream",
+                    "No such file or directory",
+                    "Stream specifier ':a' does not match any streams"
+                ]
+                
+                if any(pattern in error_message for pattern in no_audio_patterns):
+                    raise Exception("The video file does not contain any audio stream that can be extracted. Please ensure your video has audio content.")
+                
+                # Try alternative extraction methods
+                print(f"[{upload_id}] Trying alternative extraction methods...")
+                
+                # Method 1: Explicit audio stream mapping
+                try:
+                    print(f"[{upload_id}] Method 1: Explicit audio stream mapping...")
+                    subprocess.run([
+                        'ffmpeg', '-i', processing_video_path,
+                        '-map', '0:a:0',  # Map first audio stream explicitly
+                        '-vn',  # Disable video
+                        '-acodec', 'pcm_s16le',
+                        '-ar', '16000', '-ac', '1',
+                        '-y', audio_path
+                    ], check=True, capture_output=True, text=True)
+                    print(f"[{upload_id}] Method 1 succeeded")
+                except subprocess.CalledProcessError as sub_err:
+                    error_output = sub_err.stderr if sub_err.stderr else str(sub_err)
+                    print(f"[{upload_id}] Method 1 failed: {error_output}")
+                    
+                    # Method 2: Force WAV format with any available audio
+                    try:
+                        print(f"[{upload_id}] Method 2: Force WAV with any audio...")
+                        subprocess.run([
+                            'ffmpeg', '-i', processing_video_path,
+                            '-f', 'wav', '-vn',
+                            '-acodec', 'pcm_s16le',
+                            '-ar', '16000', '-ac', '1',
+                            '-y', audio_path
+                        ], check=True, capture_output=True, text=True)
+                        print(f"[{upload_id}] Method 2 succeeded")
+                    except subprocess.CalledProcessError as sub_err2:
+                        error_output2 = sub_err2.stderr if sub_err2.stderr else str(sub_err2)
+                        print(f"[{upload_id}] Method 2 failed: {error_output2}")
+                        
+                        # Check if all methods failed due to no audio
+                        combined_errors = error_message + error_output + error_output2
+                        if any(pattern in combined_errors for pattern in no_audio_patterns):
+                            raise Exception("The video file does not contain any audio stream. Please upload a video with audio content for transcription.")
+                        else:
+                            raise Exception(f"Failed to extract audio after trying multiple methods. Last error: {error_output2}")
 
-        # Verify audio file exists and has content
-        if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
-            raise Exception("Audio extraction failed: The audio file was not created or is empty")
-        
+        except Exception as audio_error:
+            # Re-raise our custom error messages
+            raise audio_error
+
+        # Verify audio file was created and has content
+        if not os.path.exists(audio_path):
+            raise Exception("Audio extraction failed: No audio file was created. The video may not contain audio.")
+            
         audio_size = os.path.getsize(audio_path)
-        print(f"[{upload_id}] Starting transcription of {audio_size/1024/1024:.2f} MB audio")
+        if audio_size == 0:
+            raise Exception("Audio extraction failed: The extracted audio file is empty. The video may not contain audio content.")
+        
+        # Check for suspiciously small audio files
+        if audio_size < 1024:  # Less than 1KB
+            print(f"[{upload_id}] Warning: Very small audio file ({audio_size} bytes) - may indicate no actual audio content")
+            
+        print(f"[{upload_id}] Audio extraction successful: {audio_size/1024/1024:.2f} MB audio file created")
         
         # Transcribe with WhisperX, passing upload_id for progress updates
         transcript = transcribe_audio(audio_path, upload_id)
