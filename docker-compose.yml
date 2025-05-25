@@ -30,14 +30,8 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./backend:/app
-      - ./uploads:/app/uploads  # Bind mount for uploads
+      - ./uploads:/app/uploads  # Bind mount for uploads (now used for temporary processing only)
       - ./models:/app/models  # Bind mount for models
-    environment:
-      - PYTHONUNBUFFERED=1
-      - TRANSFORMERS_CACHE=/app/models
-      - HF_HOME=/app/models
-      - CUDA_VISIBLE_DEVICES=0
-      - TORCH_USE_CUDA_DSA=1
     env_file:
       - .env
     depends_on:
@@ -56,15 +50,15 @@ services:
     image: redis:alpine
     volumes:
       - redis-data:/data  # Named volume is fine for Redis
+    env_file:
+      - .env
 
   postgres:
     image: postgres:13
     volumes:
       - postgres-data:/var/lib/postgresql/data  # Named volume is fine for DB
-    environment:
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-clipsummary}
-      - POSTGRES_USER=${POSTGRES_USER:-clipsummary}
-      - POSTGRES_DB=${POSTGRES_DB:-clipsummary}
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     restart: always
