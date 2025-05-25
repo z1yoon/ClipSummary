@@ -141,6 +141,32 @@ async def get_whisperx_loading_status():
         "elapsed_seconds": elapsed
     }
 
+# Simple status update function (no conflicts)
+def simple_update_status(upload_id: str, status: str, progress: float, message: str):
+    """Simple status update that writes directly to file and cache without conflicts"""
+    status_data = {
+        "status": status,
+        "upload_id": upload_id,
+        "progress": progress,
+        "message": message,
+        "updated_at": time.time()
+    }
+    
+    # Write to file
+    try:
+        status_dir = f"uploads/{upload_id}"
+        os.makedirs(status_dir, exist_ok=True)
+        with open(f"{status_dir}/status.json", "w") as f:
+            json.dump(status_data, f)
+    except Exception as e:
+        print(f"Error writing simple status: {str(e)}")
+    
+    # Cache it
+    try:
+        cache_result(f"upload:{upload_id}:status", status_data, ttl=3600)
+    except Exception as e:
+        print(f"Error caching simple status: {str(e)}")
+
 # Processing status tracking with Redis
 def update_processing_status(upload_id: str, status: str, progress: float = 0, message: str = "", error: str = None):
     """Update the processing status in Redis"""
@@ -1124,9 +1150,6 @@ async def upload_chunk(
     current_user: dict = Depends(get_current_user)
 ):
     """Upload a single chunk of a file."""
-    import asyncio
-    import aiofiles
-    
     try:
         # Verify session exists
         if upload_id not in chunked_uploads:
@@ -1144,31 +1167,71 @@ async def upload_chunk(
                 detail="Access denied"
             )
         
-        # Save chunk using async file operations to prevent blocking
+        # Validate chunk index
+        if chunk_index < 0 or chunk_index >= session["total_chunks"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid chunk index: {chunk_index}"
+            )
+        
+        # Save chunk with proper async handling
         chunk_path = f"uploads/{upload_id}/chunks/chunk_{chunk_index:06d}"
         
-        # Read chunk content asynchronously
-        content = await chunk.read()
-        content_size = len(content)
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(chunk_path), exist_ok=True)
         
-        # Write chunk asynchronously to prevent blocking other requests
-        async with aiofiles.open(chunk_path, "wb") as f:
-            await f.write(content)
-            # Note: aiofiles doesn't support fsync(), but the async write is sufficient
+        # Read and write chunk asynchronously
+        try:
+            content = await chunk.read()
+            if not content:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Empty chunk received"
+                )
+            
+            # Write chunk to file
+            async with aiofiles.open(chunk_path, "wb") as f:
+                await f.write(content)
+            
+            # Verify chunk was written correctly
+            if not os.path.exists(chunk_path) or os.path.getsize(chunk_path) != len(content):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to save chunk properly"
+                )
+            
+        except Exception as e:
+            # Clean up failed chunk
+            if os.path.exists(chunk_path):
+                try:
+                    os.remove(chunk_path)
+                except:
+                    pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save chunk: {str(e)}"
+            )
         
-        # Mark chunk as received (this is thread-safe for basic operations)
+        # Mark chunk as received
         session["chunks_received"].add(chunk_index)
         
-        # Log less frequently to reduce I/O overhead
-        if chunk_index % 10 == 0 or chunk_index < 5:
-            print(f"Received chunk {chunk_index} for upload {upload_id} ({content_size} bytes)")
+        # Calculate progress
+        progress = (len(session["chunks_received"]) / session["total_chunks"]) * 100
+        
+        # Update simple progress status
+        simple_update_status(upload_id, "uploading", progress, f"Uploading... {len(session['chunks_received'])}/{session['total_chunks']} chunks")
+        
+        # Log progress periodically
+        if chunk_index % 10 == 0 or len(session["chunks_received"]) == session["total_chunks"]:
+            print(f"Upload {upload_id}: received {len(session['chunks_received'])}/{session['total_chunks']} chunks ({progress:.1f}%)")
         
         return {
             "success": True,
             "chunk_index": chunk_index,
             "upload_id": upload_id,
             "chunks_received": len(session["chunks_received"]),
-            "total_chunks": session["total_chunks"]
+            "total_chunks": session["total_chunks"],
+            "progress": progress
         }
         
     except HTTPException:

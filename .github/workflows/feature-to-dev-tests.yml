@@ -1,0 +1,221 @@
+name: Feature Branch Tests
+
+on:
+  pull_request:
+    branches: [ dev ]
+    types: [ opened, synchronize, reopened ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+      
+      - name: Set up FFmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+      
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-asyncio
+          pip install -r requirements.txt
+      
+      - name: Create test directories
+        run: |
+          mkdir -p backend/uploads
+          mkdir -p backend/cache
+          mkdir -p backend/.cache/huggingface
+      
+      - name: Run unit tests
+        working-directory: ./backend
+        env:
+          DATABASE_URL: sqlite:///./clipsummary.db
+          SECRET_KEY: test_secret_key
+          JWT_SECRET: test_jwt_secret
+          JWT_ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: 30
+          TEST_MODE: true
+          WHISPERX_DEVICE: cpu
+        run: |
+          pytest tests/unit/ --cov=. --cov-report=xml --cov-report=term -v
+      
+      - name: Upload unit test coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./backend/coverage.xml
+          flags: unittests
+          fail_ci_if_error: false
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package.json'
+      
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: |
+          if [ -f package.json ]; then
+            npm install
+          else
+            echo "No package.json found, skipping npm install"
+          fi
+      
+      - name: Lint JavaScript files
+        working-directory: ./frontend
+        run: |
+          if [ -f package.json ] && grep -q "\"eslint\"" package.json; then
+            npm run lint || echo "Linting errors found but continuing workflow"
+          else
+            echo "ESLint not configured, skipping linting"
+          fi
+      
+      - name: Check for JavaScript syntax errors
+        working-directory: ./frontend/js
+        run: |
+          for file in *.js; do
+            if [ -f "$file" ]; then
+              echo "Checking $file for syntax errors"
+              node --check "$file" || exit 1
+            fi
+          done
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]  # Run after unit tests pass
+    
+    services:
+      # Database service
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: clipsummary
+          POSTGRES_PASSWORD: clipsummary
+          POSTGRES_DB: clipsummary
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      # Cache service
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for proper testing
+      
+      - name: Set up FFmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+      
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      
+      - name: Create test directories and prepare environment
+        run: |
+          mkdir -p backend/uploads
+          mkdir -p backend/cache
+          mkdir -p backend/.cache/huggingface
+          touch backend/clipsummary.db  # Create empty database file
+          
+          # Create a small test video file for integration tests
+          ffmpeg -f lavfi -i color=c=blue:s=320x240:d=5 -c:v libx264 backend/tests/sample_video.mp4
+      
+      - name: Run integration tests with coverage
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://clipsummary:clipsummary@localhost:5432/clipsummary
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: test_secret_key
+          JWT_SECRET: test_jwt_secret
+          JWT_ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: 30
+          MAX_UPLOAD_SIZE: 10737418240
+          WHISPERX_DEVICE: cpu  # Use CPU for GitHub Actions
+          TEST_MODE: true
+        run: |
+          pytest tests/integration/ -v --cov=. --cov-report=xml --tb=short
+      
+      - name: Upload integration test coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./backend/coverage.xml
+          fail_ci_if_error: false
+          flags: integration
+      
+      - name: Archive test results
+        if: always()  # Run even if tests fail
+        uses: actions/upload-artifact@v3
+        with:
+          name: integration-test-results
+          path: |
+            backend/tests/logs/
+            backend/*.log
+            backend/error.log
+
+  # Docker build test (optional but recommended)
+  docker-build-test:
+    runs-on: ubuntu-latest
+    needs: [integration-test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Test Docker builds
+        run: |
+          echo "Testing backend Docker build..."
+          docker build -t test-backend ./backend
+          
+          echo "Testing frontend Docker build..."  
+          docker build -t test-frontend ./frontend
+          
+          echo "Testing docker-compose build..."
+          docker-compose build
+      
+      - name: Clean up Docker images
+        run: |
+          docker rmi test-backend test-frontend || true
+          docker system prune -f

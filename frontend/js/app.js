@@ -184,31 +184,17 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function uploadVideoFileChunked(file) {
-        // Optimize chunk size based on file size for better performance
-        let CHUNK_SIZE;
-        if (file.size > 5 * 1024 * 1024 * 1024) {        // Files > 5GB
-            CHUNK_SIZE = 50 * 1024 * 1024;                // 50MB chunks (much larger!)
-        } else if (file.size > 2 * 1024 * 1024 * 1024) { // Files > 2GB  
-            CHUNK_SIZE = 25 * 1024 * 1024;                // 25MB chunks
-        } else if (file.size > 500 * 1024 * 1024) {      // Files > 500MB
-            CHUNK_SIZE = 10 * 1024 * 1024;                // 10MB chunks
-        } else {
-            CHUNK_SIZE = 5 * 1024 * 1024;                 // 5MB chunks for smaller files
-        }
-        
+        const CHUNK_SIZE = 5 * 1024 * 1024; // Simple 5MB chunks for all files
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         const uploadId = generateUploadId();
         
-        console.log(`File size: ${(file.size / (1024 * 1024 * 1024)).toFixed(2)}GB, Chunk size: ${(CHUNK_SIZE / (1024 * 1024))}MB, Total chunks: ${totalChunks}`);
+        console.log(`Starting upload: ${file.name}, Size: ${(file.size / (1024 * 1024)).toFixed(1)}MB, Chunks: ${totalChunks}`);
         
-        showProcessingStatus({
-            status: 'uploading',
-            progress: 0,
-            message: `Starting chunked upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB) - ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024))}MB each`
-        });
+        // Show simple progress
+        showSimpleProgress('Initializing upload...', 0);
 
         try {
-            // First, initialize the upload session
+            // Initialize upload
             const initResponse = await fetch('/api/upload/init-chunked', {
                 method: 'POST',
                 headers: {
@@ -229,74 +215,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(`Failed to initialize upload: ${initResponse.status}`);
             }
 
-            // Store upload progress in localStorage for persistence
-            const uploadProgress = {
-                uploadId: uploadId,
-                filename: file.name,
-                totalSize: file.size,
-                totalChunks: totalChunks,
-                completedChunks: 0,
-                status: 'uploading',
-                startTime: Date.now()
-            };
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-
-            // Upload chunks with better error handling and reduced concurrency for large files
-            const maxConcurrent = file.size > 2 * 1024 * 1024 * 1024 ? 3 : 5; // Use 3 for files > 2GB, 5 for smaller files
+            // Upload chunks one by one (no parallel uploads to avoid 400 errors)
             let completedChunks = 0;
-
-            console.log(`Using ${maxConcurrent} concurrent uploads for ${(file.size / (1024 * 1024 * 1024)).toFixed(2)}GB file`);
-
-            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += maxConcurrent) {
-                const batch = [];
+            
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                const progress = Math.round((chunkIndex / totalChunks) * 85); // Reserve 15% for processing
+                showSimpleProgress(`Uploading chunk ${chunkIndex + 1}/${totalChunks}...`, progress);
                 
-                for (let i = 0; i < maxConcurrent && (chunkIndex + i) < totalChunks; i++) {
-                    const currentChunk = chunkIndex + i;
-                    batch.push(uploadChunk(file, currentChunk, CHUNK_SIZE, uploadId, totalChunks));
-                }
-
-                try {
-                    console.log(`Uploading batch: chunks ${chunkIndex} to ${chunkIndex + batch.length - 1}`);
-                    
-                    // Wait for this batch to complete with better error handling
-                    const batchResults = await Promise.all(batch);
-                    completedChunks += batchResults.length;
-
-                    console.log(`Batch completed: ${completedChunks}/${totalChunks} chunks uploaded`);
-
-                    // Update progress in localStorage and UI
-                    uploadProgress.completedChunks = completedChunks;
-                    localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-
-                    // Update progress
-                    const progress = Math.round((completedChunks / totalChunks) * 90); // Reserve 10% for finalization
-                    showProcessingStatus({
-                        status: 'uploading',
-                        progress: progress,
-                        message: `Uploading chunks: ${completedChunks}/${totalChunks} complete (${progress}%) - ${maxConcurrent} parallel uploads`
-                    });
-
-                    // Add a small delay between batches for large files to prevent overwhelming the server
-                    if (file.size > 2 * 1024 * 1024 * 1024 && chunkIndex + maxConcurrent < totalChunks) {
-                        await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between batches for large files
-                    }
-                } catch (error) {
-                    console.error(`Batch upload failed for chunks ${chunkIndex}-${chunkIndex + batch.length - 1}:`, error);
-                    throw new Error(`Chunk upload failed at batch ${Math.floor(chunkIndex / maxConcurrent) + 1}: ${error.message}`);
+                await uploadSingleChunk(file, chunkIndex, CHUNK_SIZE, uploadId);
+                completedChunks++;
+                
+                // Small delay to prevent overwhelming the server
+                if (chunkIndex < totalChunks - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
                 }
             }
 
-            // Update progress for finalization
-            uploadProgress.status = 'finalizing';
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-
-            // Finalize the upload
-            showProcessingStatus({
-                status: 'uploading',
-                progress: 95,
-                message: 'Finalizing upload and starting processing...'
-            });
-
+            // Finalize upload
+            showSimpleProgress('Finalizing upload...', 90);
+            
             const finalizeResponse = await fetch('/api/upload/finalize-chunked', {
                 method: 'POST',
                 headers: {
@@ -312,36 +249,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(`Failed to finalize upload: ${finalizeResponse.status}`);
             }
 
-            const response = await finalizeResponse.json();
+            // Start processing tracking
+            showSimpleProgress('Upload complete! Starting processing...', 95);
             
-            // Update progress - upload complete
-            uploadProgress.status = 'processing';
-            uploadProgress.completedChunks = totalChunks;
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-            
-            showProcessingStatus({
-                status: 'processing',
-                progress: 100,
-                message: 'Upload complete! Starting video processing...'
-            });
-
-            // Start tracking processing
-            trackProcessing(response.upload_id || uploadId);
+            setTimeout(() => {
+                trackSimpleProcessing(uploadId);
+            }, 1000);
 
         } catch (error) {
-            console.error('Chunked upload failed:', error);
-            
-            // Update progress - upload failed
-            const uploadProgress = JSON.parse(localStorage.getItem(`upload_progress_${uploadId}`) || '{}');
-            uploadProgress.status = 'failed';
-            uploadProgress.error = error.message;
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-            
-            showError(`Upload failed: ${error.message}`);
+            console.error('Upload failed:', error);
+            showSimpleProgress(`Upload failed: ${error.message}`, 0, true);
         }
     }
 
-    async function uploadChunk(file, chunkIndex, chunkSize, uploadId, totalChunks) {
+    async function uploadSingleChunk(file, chunkIndex, chunkSize, uploadId) {
         const start = chunkIndex * chunkSize;
         const end = Math.min(start + chunkSize, file.size);
         const chunk = file.slice(start, end);
@@ -351,32 +272,126 @@ document.addEventListener('DOMContentLoaded', function() {
         formData.append('chunk_index', chunkIndex.toString());
         formData.append('upload_id', uploadId);
 
-        // Get fresh auth token for each chunk upload
-        const token = localStorage.getItem('access_token');
-        const tokenType = localStorage.getItem('token_type');
-
-        if (!token || !tokenType) {
-            throw new Error('Authentication required. Please login again.');
-        }
-
         const response = await fetch('/api/upload/chunk', {
             method: 'POST',
             headers: {
-                'Authorization': `${tokenType} ${token}`
+                'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
             },
             body: formData
         });
 
-        if (response.status === 401) {
-            throw new Error('Authentication expired. Please login again.');
-        }
-
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to upload chunk ${chunkIndex}: ${response.status} - ${errorText}`);
+            throw new Error(`Chunk ${chunkIndex} failed: ${response.status} - ${errorText}`);
         }
 
         return chunkIndex;
+    }
+
+    function showSimpleProgress(message, progress, isError = false) {
+        // Update the detailed processing status
+        const detailedStatusElement = document.getElementById('detailed-processing-status');
+        if (detailedStatusElement) {
+            detailedStatusElement.style.display = 'block';
+            
+            // Update progress bar
+            const progressBar = detailedStatusElement.querySelector('.processing-progress-bar');
+            if (progressBar) {
+                progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+                progressBar.style.backgroundColor = isError ? '#dc3545' : '#007bff';
+            }
+            
+            // Update message
+            const messageElement = detailedStatusElement.querySelector('.processing-message');
+            if (messageElement) {
+                messageElement.textContent = message;
+            }
+            
+            // Update header
+            const headerIcon = detailedStatusElement.querySelector('.processing-status-header i');
+            const headerText = detailedStatusElement.querySelector('.processing-status-header h3');
+            
+            if (isError) {
+                if (headerIcon) headerIcon.className = 'fas fa-exclamation-circle';
+                if (headerText) headerText.textContent = 'Upload Failed';
+            } else if (progress >= 100) {
+                if (headerIcon) headerIcon.className = 'fas fa-check-circle';
+                if (headerText) headerText.textContent = 'Processing Complete';
+            } else {
+                if (headerIcon) headerIcon.className = 'fas fa-cog fa-spin';
+                if (headerText) headerText.textContent = 'Processing Your Video';
+            }
+            
+            // Update container class
+            const container = detailedStatusElement.querySelector('.processing-status-container');
+            if (container) {
+                container.classList.remove('completed', 'failed');
+                if (isError) {
+                    container.classList.add('failed');
+                } else if (progress >= 100) {
+                    container.classList.add('completed');
+                }
+            }
+        }
+    }
+
+    function trackSimpleProcessing(uploadId) {
+        let startTime = Date.now();
+        let checkCount = 0;
+        const maxChecks = 120; // 10 minutes max
+        
+        const checkStatus = async () => {
+            try {
+                checkCount++;
+                
+                if (checkCount > maxChecks) {
+                    showSimpleProgress('Processing timeout. Please check back later.', 50, true);
+                    return;
+                }
+                
+                const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
+                
+                if (!response.ok) {
+                    throw new Error(`Status check failed: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                const elapsedText = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed/60)}m ${elapsed%60}s`;
+                
+                if (data.status === 'completed') {
+                    showSimpleProgress(`Processing completed in ${elapsedText}!`, 100);
+                    setTimeout(() => {
+                        window.location.href = `/video.html?id=${uploadId}`;
+                    }, 2000);
+                    return;
+                } else if (data.status === 'failed' || data.status === 'error') {
+                    showSimpleProgress(data.message || 'Processing failed', 0, true);
+                    return;
+                } else {
+                    // Show progress
+                    const progress = Math.max(95, data.progress || 95); // Start from 95% after upload
+                    const message = data.message || 'Processing your video...';
+                    showSimpleProgress(`${message} (${elapsedText})`, progress);
+                    
+                    // Continue checking
+                    setTimeout(checkStatus, 3000);
+                }
+                
+            } catch (error) {
+                console.error('Status check error:', error);
+                
+                // Continue checking unless too many failures
+                if (checkCount < maxChecks) {
+                    setTimeout(checkStatus, 5000);
+                } else {
+                    showSimpleProgress('Unable to check processing status', 50, true);
+                }
+            }
+        };
+        
+        // Start checking
+        setTimeout(checkStatus, 2000);
     }
 
     function generateUploadId() {
@@ -671,7 +686,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')} minutes`;
     }
 
-    // URL submission - also modified to use authenticated fetch
+    // URL submission - simplified YouTube processing
     const summarizeBtn = document.querySelector('.summarize-btn');
     
     summarizeBtn.addEventListener('click', function() {
@@ -688,13 +703,8 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // Show processing UI
-        showProcessingStatus({
-            status: 'processing',
-            progress: 5,
-            message: 'Submitting YouTube URL for processing...',
-            startTime: Date.now()
-        });
+        // Show simple progress
+        showSimpleProgress('Submitting YouTube URL...', 5);
         
         // Send the URL to the backend using authenticated fetch
         fetchWithAuth('/api/youtube/process', {
@@ -708,7 +718,6 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('YouTube response status:', response.status);
             if (!response.ok) {
                 if (response.status === 401) {
-                    // Unauthorized - redirect to login
                     window.location.href = '/login.html?redirect=' + encodeURIComponent(window.location.pathname);
                     throw new Error('Please login to process YouTube videos');
                 }
@@ -719,18 +728,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return response.json();
         })
         .then(data => {
-            console.log('Success:', data);
+            console.log('YouTube processing started:', data);
             
             // Check if this is a cached result - redirect immediately
             if (data.status === 'completed' && data.cached) {
-                showProcessingStatus({
-                    status: 'completed',
-                    progress: 100,
-                    message: 'Found cached result! Redirecting...',
-                    elapsedTime: '0 seconds'
-                });
-                
-                // Redirect immediately for cached results
+                showSimpleProgress('Found cached result! Redirecting...', 100);
                 setTimeout(() => {
                     window.location.href = `/video.html?id=${data.upload_id || data.video_id}`;
                 }, 1000);
@@ -740,23 +742,19 @@ document.addEventListener('DOMContentLoaded', function() {
             // Check if processing started successfully
             if (data.upload_id || data.video_id) {
                 const videoId = data.upload_id || data.video_id;
-                showProcessingStatus({
-                    status: 'processing',
-                    progress: 10,
-                    message: 'YouTube video accepted. Processing in background...',
-                    startTime: Date.now()
-                });
+                showSimpleProgress('YouTube video accepted. Processing...', 10);
                 
-                // Use the main detailed tracking function for YouTube to get detailed progress
-                trackProcessing(videoId);
+                // Use simple tracking for YouTube as well
+                setTimeout(() => {
+                    trackSimpleProcessing(videoId);
+                }, 1000);
             } else {
                 throw new Error('No video ID in response');
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            showError(`YouTube processing error: ${error.message}`);
-            hideLoading();
+            console.error('YouTube processing error:', error);
+            showSimpleProgress(`YouTube processing failed: ${error.message}`, 0, true);
         });
     });
 
