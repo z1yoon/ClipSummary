@@ -367,21 +367,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Chunked upload for large files (>100MB)
+    // Chunked upload for large files (>100MB) with parallel processing
     async function uploadToAzureChunked(uploadData, file) {
         const CHUNK_SIZE = 64 * 1024 * 1024; // 64MB chunks
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         const blockIds = [];
         
-        console.log(`Starting chunked upload: ${totalChunks} chunks of ${CHUNK_SIZE / (1024 * 1024)}MB each`);
+        // HTTP/2 allows up to 6-8 parallel connections, using 4 for stability
+        const MAX_PARALLEL_UPLOADS = 4;
+        
+        console.log(`Starting parallel chunked upload: ${totalChunks} chunks with ${MAX_PARALLEL_UPLOADS} parallel uploads`);
         
         showProcessingStatus({
             status: 'uploading',
             progress: 10,
-            message: `Starting chunked upload: ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024)).toFixed(0)}MB each...`
+            message: `Starting parallel upload: ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024)).toFixed(0)}MB each...`
         });
         
-        // Upload each chunk
+        // Create chunk upload promises
+        const chunkPromises = [];
+        
         for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
             const start = chunkIndex * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, file.size);
@@ -391,39 +396,45 @@ document.addEventListener('DOMContentLoaded', function() {
             const blockId = btoa(`block-${chunkIndex.toString().padStart(6, '0')}`);
             blockIds.push(blockId);
             
-            const chunkProgress = 10 + ((chunkIndex / totalChunks) * 75); // 10% to 85%
-            const uploadedMB = (start / (1024 * 1024)).toFixed(1);
-            const totalMB = (file.size / (1024 * 1024)).toFixed(1);
-            
-            showProcessingStatus({
-                status: 'uploading',
-                progress: chunkProgress,
-                message: `Uploading chunk ${chunkIndex + 1}/${totalChunks} (${uploadedMB}MB / ${totalMB}MB)...`
-            });
-            
-            // Upload this chunk
-            const chunkUrl = `${uploadData.base_url}?comp=block&blockid=${encodeURIComponent(blockId)}&${uploadData.sas_token}`;
+            // Create upload promise for this chunk
+            const chunkPromise = uploadSingleChunk(uploadData, chunk, blockId, chunkIndex, totalChunks);
+            chunkPromises.push(chunkPromise);
+        }
+        
+        // Upload chunks in parallel batches
+        const results = [];
+        let completedChunks = 0;
+        
+        for (let i = 0; i < chunkPromises.length; i += MAX_PARALLEL_UPLOADS) {
+            const batch = chunkPromises.slice(i, i + MAX_PARALLEL_UPLOADS);
+            const batchStartTime = Date.now();
             
             try {
-                const response = await fetch(chunkUrl, {
-                    method: 'PUT',
-                    headers: {
-                        'x-ms-blob-type': 'BlockBlob',
-                        'Content-Type': 'application/octet-stream'
-                    },
-                    body: chunk
+                const batchResults = await Promise.all(batch);
+                results.push(...batchResults);
+                completedChunks += batch.length;
+                
+                // Calculate upload speed for this batch
+                const batchTime = (Date.now() - batchStartTime) / 1000; // seconds
+                const batchSize = batch.length * CHUNK_SIZE;
+                const speedMBps = (batchSize / (1024 * 1024) / batchTime).toFixed(1);
+                
+                // Update progress
+                const progress = 10 + ((completedChunks / totalChunks) * 75);
+                const uploadedMB = (completedChunks * CHUNK_SIZE / (1024 * 1024)).toFixed(1);
+                const totalMB = (file.size / (1024 * 1024)).toFixed(1);
+                
+                showProcessingStatus({
+                    status: 'uploading',
+                    progress: progress,
+                    message: `Parallel upload: ${completedChunks}/${totalChunks} chunks (${uploadedMB}MB / ${totalMB}MB) at ${speedMBps} MB/s`
                 });
                 
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`Failed to upload chunk ${chunkIndex + 1}: ${response.status} - ${errorText}`);
-                }
-                
-                console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`);
+                console.log(`Batch ${Math.floor(i / MAX_PARALLEL_UPLOADS) + 1} completed: ${batch.length} chunks at ${speedMBps} MB/s`);
                 
             } catch (error) {
-                console.error(`Error uploading chunk ${chunkIndex + 1}:`, error);
-                throw new Error(`Failed to upload chunk ${chunkIndex + 1}: ${error.message}`);
+                console.error(`Batch upload failed:`, error);
+                throw new Error(`Parallel upload failed at batch ${Math.floor(i / MAX_PARALLEL_UPLOADS) + 1}: ${error.message}`);
             }
         }
         
@@ -431,7 +442,7 @@ document.addEventListener('DOMContentLoaded', function() {
         showProcessingStatus({
             status: 'uploading',
             progress: 85,
-            message: 'Finalizing upload - combining all chunks...'
+            message: 'Finalizing parallel upload - combining all chunks...'
         });
         
         const commitUrl = `${uploadData.base_url}?comp=blocklist&${uploadData.sas_token}`;
@@ -445,9 +456,14 @@ ${blockIds.map(blockId => `  <Latest>${blockId}</Latest>`).join('\n')}
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/xml',
-                    'x-ms-blob-content-type': 'video/mp4'
+                    'x-ms-blob-content-type': 'video/mp4',
+                    // HTTP/2 optimization headers
+                    'Connection': 'keep-alive',
+                    'Cache-Control': 'no-cache'
                 },
-                body: blockListXml
+                body: blockListXml,
+                // Enable modern fetch features for HTTP/2
+                keepalive: true
             });
             
             if (!commitResponse.ok) {
@@ -458,97 +474,72 @@ ${blockIds.map(blockId => `  <Latest>${blockId}</Latest>`).join('\n')}
             showProcessingStatus({
                 status: 'uploaded',
                 progress: 90,
-                message: 'Chunked upload completed successfully! Verifying file...'
+                message: 'Parallel chunked upload completed successfully! Verifying file...'
             });
             
-            console.log('All chunks committed successfully');
-            return { status: 'success', method: 'chunked', chunks: totalChunks };
+            console.log('All chunks committed successfully with parallel upload');
+            return { 
+                status: 'success', 
+                method: 'parallel_chunked', 
+                chunks: totalChunks,
+                parallelConnections: MAX_PARALLEL_UPLOADS
+            };
             
         } catch (error) {
             console.error('Error committing blocks:', error);
-            throw new Error(`Failed to finalize chunked upload: ${error.message}`);
+            throw new Error(`Failed to finalize parallel upload: ${error.message}`);
         }
     }
 
-    // Direct upload for smaller files (<100MB)
-    function uploadToAzureDirect(uploadData, file) {
-        return new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            
-            // Track upload progress
-            xhr.upload.addEventListener('progress', (event) => {
-                if (event.lengthComputable) {
-                    const percentComplete = (event.loaded / event.total) * 100;
-                    const uploadedMB = (event.loaded / (1024 * 1024)).toFixed(2);
-                    const totalMB = (event.total / (1024 * 1024)).toFixed(2);
-                    const speedMBps = calculateUploadSpeed(event.loaded);
-                    
-                    // Progress ranges from 10% to 90% during upload
-                    const adjustedProgress = 10 + (percentComplete * 0.8); // Maps 0-100% to 10-90%
-                    
-                    showProcessingStatus({
-                        status: 'uploading',
-                        progress: adjustedProgress,
-                        message: `Uploading ${file.name}: ${uploadedMB}MB / ${totalMB}MB (${percentComplete.toFixed(1)}%) ${speedMBps ? `at ${speedMBps} MB/s` : ''}`
-                    });
-                }
-            });
-            
-            // Handle upload completion
-            xhr.addEventListener('load', () => {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    showProcessingStatus({
-                        status: 'uploaded',
-                        progress: 90,
-                        message: `Direct upload completed successfully!`
-                    });
-                    resolve({
-                        status: xhr.status,
-                        statusText: xhr.statusText,
-                        response: xhr.response,
-                        method: 'direct'
-                    });
-                } else {
-                    const errorDetails = {
-                        status: xhr.status,
-                        statusText: xhr.statusText,
-                        response: xhr.responseText,
-                        uploadUrl: uploadData.base_url
-                    };
-                    console.error('Azure direct upload failed:', errorDetails);
-                    reject(new Error(`Direct upload to cloud storage failed: ${xhr.status} - ${xhr.statusText || xhr.responseText}`));
-                }
-            });
-            
-            // Handle upload errors
-            xhr.addEventListener('error', () => {
-                console.error('Azure upload network error:', {
-                    status: xhr.status,
-                    statusText: xhr.statusText,
-                    response: xhr.responseText
+    async function uploadSingleChunk(uploadData, chunk, blockId, chunkIndex, totalChunks) {
+        const chunkUrl = `${uploadData.base_url}?comp=block&blockid=${encodeURIComponent(blockId)}&${uploadData.sas_token}`;
+        
+        // Retry logic for individual chunks
+        const maxRetries = 3;
+        let lastError;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch(chunkUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'x-ms-blob-type': 'BlockBlob',
+                        'Content-Type': 'application/octet-stream',
+                        // HTTP/2 optimization headers
+                        'Connection': 'keep-alive',
+                        'Cache-Control': 'no-cache'
+                    },
+                    body: chunk,
+                    // Enable HTTP/2 features
+                    keepalive: true,
+                    signal: AbortSignal.timeout(300000) // 5 minute timeout per chunk
                 });
-                reject(new Error('Network error during direct upload to cloud storage'));
-            });
-            
-            // Handle upload timeout
-            xhr.addEventListener('timeout', () => {
-                reject(new Error('Direct upload to cloud storage timed out'));
-            });
-            
-            // Configure the request for direct upload
-            const directUploadUrl = `${uploadData.base_url}?${uploadData.sas_token}`;
-            xhr.open('PUT', directUploadUrl);
-            
-            // Set required headers for Azure Blob Storage
-            xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
-            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-            
-            // Set timeout (1 hour for direct uploads)
-            xhr.timeout = 60 * 60 * 1000; // 1 hour in milliseconds
-            
-            // Start the upload
-            xhr.send(file);
-        });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully (parallel, attempt ${attempt})`);
+                return { chunkIndex, success: true, attempt };
+                
+            } catch (error) {
+                lastError = error;
+                console.warn(`Chunk ${chunkIndex + 1} upload attempt ${attempt} failed:`, error.message);
+                
+                if (attempt < maxRetries) {
+                    // Exponential backoff: wait 1s, 2s, 4s
+                    const waitTime = Math.pow(2, attempt - 1) * 1000;
+                    console.log(`Retrying chunk ${chunkIndex + 1} in ${waitTime}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                } else {
+                    console.error(`Chunk ${chunkIndex + 1} failed after ${maxRetries} attempts:`, error);
+                    throw new Error(`Failed to upload chunk ${chunkIndex + 1} after ${maxRetries} attempts: ${error.message}`);
+                }
+            }
+        }
+        
+        throw lastError;
     }
 
     // YouTube URL processing
