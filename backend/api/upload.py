@@ -155,8 +155,8 @@ def update_processing_status(upload_id: str, status: str, progress: float = 0, m
     if error:
         status_data["error"] = error
     
-    # Cache with a longer TTL (3 days) to keep processing history
-    cache_result(f"upload:{upload_id}:status", status_data, ttl=259200)
+    # Cache with shorter TTL (1 hour) to avoid keeping long history
+    cache_result(f"upload:{upload_id}:status", status_data, ttl=3600)
     
     # Also save to file system as fallback
     try:

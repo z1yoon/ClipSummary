@@ -345,18 +345,18 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         os.makedirs(f"uploads/{processing_id}", exist_ok=True)
         audio_path = f"uploads/{processing_id}/audio.wav"
         
-        # Initialize status tracking using processing_id
+        # Initialize status tracking using processing_id with more detailed progress
         update_processing_status(
             upload_id=processing_id,
             status="processing",
             progress=5,
-            message="Starting YouTube video download..."
+            message="Initializing YouTube video download..."
         )
         
         print(f"📁 Created directory: uploads/{processing_id}")
         print(f"🎵 Target audio path: {audio_path}")
         
-        # Download strategy 1: Direct audio extraction with yt-dlp
+        # Download strategy with enhanced progress tracking
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': f'uploads/{processing_id}/%(title)s.%(ext)s',
@@ -375,16 +375,31 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             upload_id=processing_id,
             status="processing",
             progress=10,
-            message="Downloading YouTube video audio..."
+            message="Connecting to YouTube and preparing download..."
         )
         
         print(f"🔽 Starting download with yt-dlp for: {url}")
+        
+        # Update progress during download
+        update_processing_status(
+            upload_id=processing_id,
+            status="processing",
+            progress=15,
+            message="Downloading YouTube video audio stream..."
+        )
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 # Download and extract audio
                 ydl.download([url])
                 print("✅ yt-dlp download completed")
+                
+                update_processing_status(
+                    upload_id=processing_id,
+                    status="processing",
+                    progress=25,
+                    message="Audio download completed, processing audio file..."
+                )
                 
                 # Find the downloaded audio file
                 upload_dir = Path(f"uploads/{processing_id}")
@@ -413,14 +428,14 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         if audio_size < 10000:  # Less than 10KB is suspicious
             raise Exception("Downloaded audio file is too small and likely invalid")
         
-        # Transcribe with WhisperX
         update_processing_status(
             upload_id=processing_id,
             status="processing",
-            progress=40,
-            message="Audio downloaded successfully. Starting transcription..."
+            progress=35,
+            message=f"Audio file prepared ({audio_size/1024/1024:.1f}MB). Starting transcription..."
         )
         
+        # Transcribe with WhisperX
         print(f"🎤 Starting transcription for {processing_id}")
         transcript = transcribe_audio(audio_path, upload_id=processing_id)
         
@@ -429,18 +444,25 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         
         print(f"✅ Transcription completed with {len(transcript['segments'])} segments")
         
-        # Generate summary (English)
         update_processing_status(
             upload_id=processing_id,
             status="processing",
-            progress=70,
-            message="Generating summary..."
+            progress=65,
+            message=f"Transcription completed ({len(transcript['segments'])} segments). Generating summary..."
         )
         
+        # Generate summary (English)
         summary = generate_summary(' '.join([segment['text'] for segment in transcript['segments']]), 
                                   max_sentences=summary_length, upload_id=processing_id)
         
         print(f"📝 Summary generated, length: {len(summary)} characters")
+        
+        update_processing_status(
+            upload_id=processing_id,
+            status="processing",
+            progress=75,
+            message="Summary generated. Preparing final results..."
+        )
         
         # Prepare results
         result = {
@@ -458,29 +480,44 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         }
         
         # Translate to requested languages
-        if len([lang for lang in languages if lang != "en"]) > 0:
+        translation_languages = [lang for lang in languages if lang != "en"]
+        if len(translation_languages) > 0:
             update_processing_status(
                 upload_id=processing_id,
                 status="processing",
                 progress=80,
-                message="Translating content..."
+                message=f"Translating content to {len(translation_languages)} language(s)..."
             )
             
-            for lang in languages:
-                if lang != "en":  # Skip English as it's already done
-                    print(f"🌐 Translating to {lang}")
-                    result["translations"][lang] = {
-                        "summary": translate_text(summary, target_lang=lang, upload_id=processing_id),
-                        "transcript": [
-                            {
-                                "start": segment["start"],
-                                "end": segment["end"],
-                                "text": translate_text(segment["text"], target_lang=lang, upload_id=processing_id)
-                            }
-                            for segment in transcript["segments"]
-                        ]
-                    }
-                    print(f"✅ Translation to {lang} completed")
+            for i, lang in enumerate(translation_languages):
+                print(f"🌐 Translating to {lang} ({i+1}/{len(translation_languages)})")
+                
+                update_processing_status(
+                    upload_id=processing_id,
+                    status="processing",
+                    progress=80 + (i / len(translation_languages)) * 15,
+                    message=f"Translating to {lang} ({i+1}/{len(translation_languages)})..."
+                )
+                
+                result["translations"][lang] = {
+                    "summary": translate_text(summary, target_lang=lang, upload_id=processing_id),
+                    "transcript": [
+                        {
+                            "start": segment["start"],
+                            "end": segment["end"],
+                            "text": translate_text(segment["text"], target_lang=lang, upload_id=processing_id)
+                        }
+                        for segment in transcript["segments"]
+                    ]
+                }
+                print(f"✅ Translation to {lang} completed")
+        
+        update_processing_status(
+            upload_id=processing_id,
+            status="processing",
+            progress=98,
+            message="Saving results and finalizing..."
+        )
         
         # Save results
         with open(f"uploads/{processing_id}/result.json", 'w') as f:
@@ -493,7 +530,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             upload_id=processing_id,
             status="completed",
             progress=100,
-            message="Processing completed successfully."
+            message="YouTube video processing completed successfully!"
         )
         
         print(f"🎉 YouTube processing completed successfully for {processing_id}")

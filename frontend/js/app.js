@@ -1,206 +1,69 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Authentication-related functions
     function isAuthenticated() {
-        return localStorage.getItem('access_token') !== null;
+        const token = localStorage.getItem('access_token');
+        return token !== null;
     }
 
     function updateAuthUI() {
-        const authLinks = document.querySelector('.auth-links');
-        const profileLink = document.querySelector('.profile-link');
+        const authSection = document.querySelector('.auth-section');
+        const userSection = document.querySelector('.user-section');
+        const userName = document.querySelector('.user-name');
         
-        if (authLinks) {
-            if (isAuthenticated()) {
-                // User is logged in - show profile link and logout
-                authLinks.innerHTML = `
-                    <li><a href="/profile.html" class="btn btn-outline">My Videos</a></li>
-                    <li><a href="#" id="logout-link" class="btn">Logout</a></li>
-                `;
-                
-                // Add event listener for logout
-                document.getElementById('logout-link').addEventListener('click', function(e) {
-                    e.preventDefault();
-                    logout();
-                });
-            } 
-            // Only update if not authenticated and login button doesn't have the icon
-            else {
-                const loginBtn = authLinks.querySelector('.login-btn i');
-                // Check if login button exists but doesn't have the right icon
-                if (!loginBtn || !loginBtn.classList.contains('fa-right-to-bracket')) {
-                    authLinks.innerHTML = `
-                        <li><a href="/login.html" class="btn btn-outline login-btn"><i class="fa-solid fa-right-to-bracket"></i>Login</a></li>
-                        <li><a href="/signup.html" class="btn btn-primary">Register Now</a></li>
-                    `;
-                }
+        if (isAuthenticated()) {
+            if (authSection) authSection.style.display = 'none';
+            if (userSection) userSection.style.display = 'flex';
+            
+            // Get username from localStorage
+            const username = localStorage.getItem('username');
+            if (userName && username) {
+                userName.textContent = username;
             }
+        } else {
+            if (authSection) authSection.style.display = 'flex';
+            if (userSection) userSection.style.display = 'none';
         }
     }
 
     function logout() {
         localStorage.removeItem('access_token');
         localStorage.removeItem('token_type');
-        // Redirect to home page
-        window.location.href = '/';
+        localStorage.removeItem('username');
+        // Clear any upload progress data on logout
+        cleanupAllUploads();
+        window.location.href = '/login.html';
     }
 
     // Add authorization headers to fetch requests
     function fetchWithAuth(url, options = {}) {
-        if (isAuthenticated()) {
-            const token = localStorage.getItem('access_token');
-            const type = localStorage.getItem('token_type');
-            
-            options.headers = options.headers || {};
-            options.headers['Authorization'] = `${type} ${token}`;
-        }
+        const token = localStorage.getItem('access_token');
+        const tokenType = localStorage.getItem('token_type');
         
-        return fetch(url, options);
+        if (!token) {
+            throw new Error('No authentication token found');
+        }
+
+        return fetch(url, {
+            ...options,
+            headers: {
+                ...options.headers,
+                'Authorization': `${tokenType} ${token}`
+            }
+        });
     }
 
     // Update UI based on authentication status
     updateAuthUI();
 
-    // Check for ongoing uploads when page loads
-    checkForOngoingUploads();
-
-    // Function to check for ongoing uploads in localStorage
-    function checkForOngoingUploads() {
-        if (!isAuthenticated()) return;
-
-        // Look for any upload progress in localStorage
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith('upload_progress_')) {
-                try {
-                    const progressData = JSON.parse(localStorage.getItem(key));
-                    const uploadId = progressData.uploadId;
-                    
-                    // Only restore uploads that are not completed
-                    if (progressData.status === 'uploading' || progressData.status === 'finalizing' || progressData.status === 'processing') {
-                        console.log(`Found ongoing upload: ${uploadId}`, progressData);
-                        
-                        if (progressData.status === 'uploading') {
-                            // Show upload progress
-                            const uploadProgress = Math.round((progressData.completedChunks / progressData.totalChunks) * 90);
-                            showProcessingStatus({
-                                status: 'uploading',
-                                progress: uploadProgress,
-                                message: `Resuming upload: ${progressData.completedChunks}/${progressData.totalChunks} chunks complete (${uploadProgress}%)`
-                            });
-                            
-                            // Note: We can't actually resume chunk uploads, but we can check the backend status
-                            setTimeout(() => checkBackendStatus(uploadId), 2000);
-                        } else if (progressData.status === 'processing') {
-                            // Resume processing tracking
-                            showProcessingStatus({
-                                status: 'processing',
-                                progress: 15,
-                                message: 'Resuming video processing tracking...'
-                            });
-                            
-                            trackProcessing(uploadId);
-                        }
-                    } else if (progressData.status === 'completed') {
-                        // Clean up completed uploads after 24 hours
-                        const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-                        if (progressData.startTime < oneDayAgo) {
-                            localStorage.removeItem(key);
-                        }
-                    } else if (progressData.status === 'failed') {
-                        // Show failed upload notification
-                        showError(`Previous upload failed: ${progressData.filename} - ${progressData.error || 'Unknown error'}`);
-                        
-                        // Clean up failed uploads after showing the error
-                        setTimeout(() => {
-                            localStorage.removeItem(key);
-                        }, 10000);
-                    }
-                } catch (error) {
-                    console.error('Error parsing upload progress:', error);
-                    // Remove corrupted data
-                    localStorage.removeItem(key);
-                }
-            }
-        }
-    }
-
-    // Function to check backend status for resumed uploads
-    async function checkBackendStatus(uploadId) {
-        try {
-            const response = await fetchWithAuth(`/api/upload/status/${uploadId}`);
-            if (response.ok) {
-                const data = await response.json();
-                
-                if (data.status === 'completed') {
-                    showProcessingStatus({
-                        status: 'completed',
-                        progress: 100,
-                        message: 'Upload and processing completed while you were away!'
-                    });
-                    
-                    // Clean up localStorage
-                    localStorage.removeItem(`upload_progress_${uploadId}`);
-                    
-                    // Offer to redirect to video
-                    setTimeout(() => {
-                        if (confirm('Your video processing completed! Would you like to view it now?')) {
-                            window.location.href = `/video.html?id=${uploadId}`;
-                        }
-                    }, 2000);
-                    
-                } else if (data.status === 'processing') {
-                    // Resume processing tracking
-                    trackProcessing(uploadId);
-                    
-                } else if (data.status === 'failed') {
-                    showError(`Upload failed: ${data.message || 'Unknown error'}`);
-                    localStorage.removeItem(`upload_progress_${uploadId}`);
-                    
-                } else {
-                    // Upload might still be in progress on backend
-                    showProcessingStatus({
-                        status: 'processing',
-                        progress: 10,
-                        message: 'Upload in progress on server...'
-                    });
-                    
-                    // Track the processing
-                    trackProcessing(uploadId);
-                }
-            } else {
-                // Upload might not exist anymore
-                console.log(`Upload ${uploadId} not found on server, cleaning up`);
-                localStorage.removeItem(`upload_progress_${uploadId}`);
-            }
-        } catch (error) {
-            console.error('Error checking backend status:', error);
-            // Continue tracking in case it's a temporary network issue
-            trackProcessing(uploadId);
-        }
-    }
-
-    // Function to clean up old upload progress data
-    function cleanupOldUploads() {
-        const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-        
+    // Function to clean up all upload progress data
+    function cleanupAllUploads() {
         for (let i = localStorage.length - 1; i >= 0; i--) {
             const key = localStorage.key(i);
             if (key && key.startsWith('upload_progress_')) {
-                try {
-                    const progressData = JSON.parse(localStorage.getItem(key));
-                    if (progressData.startTime && progressData.startTime < oneDayAgo) {
-                        localStorage.removeItem(key);
-                        console.log(`Cleaned up old upload progress: ${key}`);
-                    }
-                } catch (error) {
-                    // Remove corrupted data
-                    localStorage.removeItem(key);
-                }
+                localStorage.removeItem(key);
             }
         }
     }
-
-    // Clean up old uploads on page load
-    cleanupOldUploads();
 
     // URL input field cursor effect
     const urlInput = document.querySelector('.url-input input');
