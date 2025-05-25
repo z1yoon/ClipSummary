@@ -295,404 +295,99 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Use chunked upload for better performance
-        uploadVideoFileChunked(file);
+        // Simple upload only
+        uploadVideoFileSimple(file);
     }
 
-    async function uploadVideoFileChunked(file) {
-        // Optimize chunk size based on file size for better performance
-        let CHUNK_SIZE;
-        if (file.size > 5 * 1024 * 1024 * 1024) {        // Files > 5GB
-            CHUNK_SIZE = 50 * 1024 * 1024;                // 50MB chunks (much larger!)
-        } else if (file.size > 2 * 1024 * 1024 * 1024) { // Files > 2GB  
-            CHUNK_SIZE = 25 * 1024 * 1024;                // 25MB chunks
-        } else if (file.size > 500 * 1024 * 1024) {      // Files > 500MB
-            CHUNK_SIZE = 10 * 1024 * 1024;                // 10MB chunks
-        } else {
-            CHUNK_SIZE = 5 * 1024 * 1024;                 // 5MB chunks for smaller files
-        }
-
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    async function uploadVideoFileSimple(file) {
         const uploadId = generateUploadId();
         
-        console.log(`File size: ${(file.size / (1024 * 1024 * 1024)).toFixed(2)}GB, Chunk size: ${(CHUNK_SIZE / (1024 * 1024))}MB, Total chunks: ${totalChunks}`);
+        console.log(`Starting upload for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`);
         
         showProcessingStatus({
             status: 'uploading',
-            progress: 0,
-            message: `Starting chunked upload of ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB) - ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024))}MB each`,
-            uploadId: uploadId  // Add uploadId for cancel functionality
+            progress: 10,
+            message: `Uploading ${file.name}...`,
+            uploadId: uploadId
         });
 
-        // Store uploadId globally for cancel functionality
         window.currentUploadId = uploadId;
         window.currentUploadCanceled = false;
 
         try {
-            // First, initialize the upload session
-            const initResponse = await fetch('/api/upload/init-chunked', {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('languages', 'en');
+            formData.append('summary_length', '3');
+
+            const token = localStorage.getItem('access_token');
+            const tokenType = localStorage.getItem('token_type');
+
+            if (!token || !tokenType) {
+                throw new Error('Authentication required. Please login again.');
+            }
+
+            console.log('Uploading to /api/upload/video');
+
+            const response = await fetch('/api/upload/video', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
+                    'Authorization': `${tokenType} ${token}`
                 },
-                body: JSON.stringify({
-                    upload_id: uploadId,
-                    filename: file.name,
-                    total_size: file.size,
-                    total_chunks: totalChunks,
-                    languages: 'en',
-                    summary_length: 3
-                })
+                body: formData
             });
 
-            if (!initResponse.ok) {
-                throw new Error(`Failed to initialize upload: ${initResponse.status}`);
+            if (response.status === 401) {
+                throw new Error('Authentication expired. Please login again.');
             }
 
-            // Store upload progress in localStorage for persistence
-            const uploadProgress = {
-                uploadId: uploadId,
-                filename: file.name,
-                totalSize: file.size,
-                totalChunks: totalChunks,
-                completedChunks: 0,
-                status: 'uploading',
-                startTime: Date.now()
-            };
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-
-            // Improved concurrent upload with queue management
-            const maxConcurrent = 6; // Optimal concurrent uploads as requested
-            let completedChunks = 0;
-            const failedChunks = new Set();
-            const retryAttempts = new Map();
-            const maxRetries = 3;
-
-            console.log(`Using ${maxConcurrent} concurrent uploads for ${(file.size / (1024 * 1024 * 1024)).toFixed(2)}GB file`);
-
-            // Create a queue of all chunks to upload
-            const chunkQueue = Array.from({length: totalChunks}, (_, i) => i);
-            
-            // Function to upload a single chunk with retry logic
-            const uploadChunkWithRetry = async (chunkIndex) => {
-                for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                    try {
-                        // Check if upload was canceled
-                        if (window.currentUploadCanceled) {
-                            throw new Error('Upload canceled by user');
-                        }
-                        
-                        const result = await uploadChunk(file, chunkIndex, CHUNK_SIZE, uploadId, totalChunks);
-                        return result;
-                    } catch (error) {
-                        console.warn(`Chunk ${chunkIndex} failed attempt ${attempt}/${maxRetries}:`, error.message);
-                        
-                        if (attempt === maxRetries) {
-                            failedChunks.add(chunkIndex);
-                            throw new Error(`Chunk ${chunkIndex} failed after ${maxRetries} attempts: ${error.message}`);
-                        }
-                        
-                        // Exponential backoff: wait longer between retries
-                        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    }
-                }
-            };
-
-            // Process chunks with controlled concurrency
-            const processQueue = async () => {
-                const activeUploads = new Set();
-                
-                while (chunkQueue.length > 0 || activeUploads.size > 0) {
-                    // Check if upload was canceled
-                    if (window.currentUploadCanceled) {
-                        throw new Error('Upload canceled by user');
-                    }
-                    
-                    // Start new uploads up to the concurrent limit
-                    while (activeUploads.size < maxConcurrent && chunkQueue.length > 0) {
-                        const chunkIndex = chunkQueue.shift();
-                        
-                        const uploadPromise = uploadChunkWithRetry(chunkIndex)
-                            .then(() => {
-                                completedChunks++;
-                                
-                                // Update progress in localStorage and UI
-                                uploadProgress.completedChunks = completedChunks;
-                                localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-
-                                // Update progress UI
-                                const progress = Math.round((completedChunks / totalChunks) * 90); // Reserve 10% for finalization
-                                showProcessingStatus({
-                                    status: 'uploading',
-                                    progress: progress,
-                                    message: `Uploading: ${completedChunks}/${totalChunks} chunks (${progress}%) - ${activeUploads.size} active uploads`,
-                                    uploadId: uploadId
-                                });
-                                
-                                console.log(`✓ Chunk ${chunkIndex} completed (${completedChunks}/${totalChunks})`);
-                            })
-                            .catch((error) => {
-                                console.error(`✗ Chunk ${chunkIndex} failed:`, error.message);
-                                throw error;
-                            })
-                            .finally(() => {
-                                activeUploads.delete(uploadPromise);
-                            });
-                        
-                        activeUploads.add(uploadPromise);
-                    }
-                    
-                    // Wait for at least one upload to complete
-                    if (activeUploads.size > 0) {
-                        try {
-                            await Promise.race(activeUploads);
-                        } catch (error) {
-                            // If any chunk fails, we'll handle it in the retry logic above
-                            console.error('Upload error caught in race:', error.message);
-                        }
-                    }
-                    
-                    // Small delay to prevent overwhelming the browser/server
-                    if (activeUploads.size >= maxConcurrent) {
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                    }
-                }
-            };
-
-            // Execute the upload queue
-            await processQueue();
-
-            // Check if upload was canceled
-            if (window.currentUploadCanceled) {
-                throw new Error('Upload canceled by user');
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Upload failed: ${response.status} - ${errorText}`);
             }
 
-            // Check if any chunks failed permanently
-            if (failedChunks.size > 0) {
-                throw new Error(`Upload failed: ${failedChunks.size} chunks could not be uploaded after retries`);
-            }
+            const result = await response.json();
+            console.log('Upload successful:', result);
 
-            // Update progress for finalization
-            uploadProgress.status = 'finalizing';
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-
-            // Finalize the upload
-            showProcessingStatus({
-                status: 'uploading',
-                progress: 95,
-                message: 'Finalizing upload and starting processing...',
-                uploadId: uploadId
-            });
-
-            const finalizeResponse = await fetch('/api/upload/finalize-chunked', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
-                },
-                body: JSON.stringify({
-                    upload_id: uploadId
-                })
-            });
-
-            if (!finalizeResponse.ok) {
-                throw new Error(`Failed to finalize upload: ${finalizeResponse.status}`);
-            }
-
-            const response = await finalizeResponse.json();
-            
-            // Update progress - upload complete
-            uploadProgress.status = 'processing';
-            uploadProgress.completedChunks = totalChunks;
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-            
             showProcessingStatus({
                 status: 'processing',
                 progress: 100,
-                message: 'Upload complete! Starting video processing...'
+                message: 'Upload complete! Processing video...'
             });
 
-            // Clear cancel state
-            window.currentUploadId = null;
-            window.currentUploadCanceled = false;
-
             // Start tracking processing
-            trackProcessing(response.upload_id || uploadId);
+            trackProcessing(result.upload_id || uploadId);
 
         } catch (error) {
-            console.error('Chunked upload failed:', error);
-            
-            // If upload was canceled, clean up on backend
-            if (window.currentUploadCanceled && window.currentUploadId) {
-                try {
-                    await cancelUpload(window.currentUploadId);
-                } catch (cancelError) {
-                    console.error('Failed to cancel upload on backend:', cancelError);
-                }
-            }
-            
-            // Update progress - upload failed
-            const uploadProgress = JSON.parse(localStorage.getItem(`upload_progress_${uploadId}`) || '{}');
-            uploadProgress.status = 'failed';
-            uploadProgress.error = error.message;
-            localStorage.setItem(`upload_progress_${uploadId}`, JSON.stringify(uploadProgress));
-            
-            // Clear cancel state
+            console.error('Upload failed:', error);
             window.currentUploadId = null;
             window.currentUploadCanceled = false;
-            
             showError(`Upload failed: ${error.message}`);
         }
     }
 
-    async function uploadChunk(file, chunkIndex, chunkSize, uploadId, totalChunks) {
-        const start = chunkIndex * chunkSize;
-        const end = Math.min(start + chunkSize, file.size);
-        const chunk = file.slice(start, end);
-
-        const formData = new FormData();
-        formData.append('chunk', chunk);
-        formData.append('chunk_index', chunkIndex.toString());
-        formData.append('upload_id', uploadId);
-
-        // Get fresh auth token for each chunk upload
-        const token = localStorage.getItem('access_token');
-        const tokenType = localStorage.getItem('token_type');
-
-        if (!token || !tokenType) {
-            throw new Error('Authentication required. Please login again.');
-        }
-
-        const response = await fetch('/api/upload/chunk', {
-            method: 'POST',
-            headers: {
-                'Authorization': `${tokenType} ${token}`
-            },
-            body: formData
-        });
-
-        if (response.status === 401) {
-            throw new Error('Authentication expired. Please login again.');
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to upload chunk ${chunkIndex}: ${response.status} - ${errorText}`);
-        }
-
-        return chunkIndex;
-    }
-
     function generateUploadId() {
-        return 'upload_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        return `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
 
-    // Function to cancel an ongoing upload
-    async function cancelUpload(uploadId) {
-        try {
-            const response = await fetch('/api/upload/cancel-chunked', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
-                },
-                body: JSON.stringify({
-                    upload_id: uploadId
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to cancel upload: ${response.status}`);
-            }
-
-            const result = await response.json();
-            console.log('Upload canceled on backend:', result);
-            
-            // Clean up localStorage
-            localStorage.removeItem(`upload_progress_${uploadId}`);
-            
-            return result;
-        } catch (error) {
-            console.error('Error canceling upload:', error);
-            throw error;
-        }
-    }
-
-    // Function to handle upload cancellation
+    // Simple cancel function
     async function handleUploadCancel() {
-        if (window.currentUploadId && !window.currentUploadCanceled) {
+        if (window.currentUploadId) {
             window.currentUploadCanceled = true;
+            window.currentUploadId = null;
             
             showProcessingStatus({
-                status: 'canceling',
+                status: 'canceled',
                 progress: 0,
-                message: 'Canceling upload and cleaning up...'
+                message: 'Upload canceled.'
             });
             
-            try {
-                // Call the backend to cancel and clean up
-                const response = await fetch('/api/upload/cancel-chunked', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
-                    },
-                    body: JSON.stringify({
-                        upload_id: window.currentUploadId
-                    })
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    console.log('Upload canceled successfully:', result);
-                    
-                    // Also try to delete the video database entry if it was created
-                    try {
-                        const deleteResponse = await fetch(`/api/upload/video/${window.currentUploadId}`, {
-                            method: 'DELETE',
-                            headers: {
-                                'Authorization': `${localStorage.getItem('token_type')} ${localStorage.getItem('access_token')}`
-                            }
-                        });
-                        
-                        if (deleteResponse.ok) {
-                            console.log('Video database entry deleted successfully');
-                        }
-                    } catch (deleteError) {
-                        console.log('No video database entry to delete or deletion failed:', deleteError);
-                    }
-                    
-                    // Clean up localStorage
-                    localStorage.removeItem(`upload_progress_${window.currentUploadId}`);
-                    
-                    showProcessingStatus({
-                        status: 'canceled',
-                        progress: 0,
-                        message: 'Upload canceled and all data cleaned up successfully.'
-                    });
-                    
-                    // Hide the processing status after a delay
-                    setTimeout(() => {
-                        const processingStatus = document.getElementById('detailed-processing-status');
-                        if (processingStatus) {
-                            processingStatus.style.display = 'none';
-                        }
-                    }, 3000);
-                    
-                } else {
-                    throw new Error(`Failed to cancel upload: ${response.status}`);
+            setTimeout(() => {
+                const processingStatus = document.getElementById('detailed-processing-status');
+                if (processingStatus) {
+                    processingStatus.style.display = 'none';
                 }
-                
-            } catch (error) {
-                console.error('Error canceling upload:', error);
-                showError(`Failed to cancel upload: ${error.message}`);
-            } finally {
-                // Clear cancel state
-                window.currentUploadId = null;
-                window.currentUploadCanceled = false;
-            }
+            }, 2000);
         }
     }
 
