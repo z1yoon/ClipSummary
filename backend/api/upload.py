@@ -383,13 +383,32 @@ async def process_azure_video(
     try:
         logger.info(f"[{upload_id}] Starting Azure video processing for {filename}")
         
-        # Verify blob exists
-        if not azure_storage.verify_blob_exists(upload_id, filename):
-            raise Exception(f"Video file not found in Azure Blob Storage")
+        # Verify blob exists with retry logic
+        blob_verified = False
+        for attempt in range(3):
+            try:
+                if azure_storage.verify_blob_exists(upload_id, filename):
+                    blob_verified = True
+                    break
+                else:
+                    if attempt < 2:
+                        logger.warning(f"[{upload_id}] Blob not found, retrying in {2**attempt} seconds...")
+                        await asyncio.sleep(2**attempt)
+                    else:
+                        raise Exception(f"Video file not found in Azure Blob Storage after 3 attempts")
+            except Exception as e:
+                if attempt < 2:
+                    logger.warning(f"[{upload_id}] Blob verification failed (attempt {attempt+1}): {str(e)}")
+                    await asyncio.sleep(2**attempt)
+                else:
+                    raise Exception(f"Failed to verify blob existence: {str(e)}")
         
+        if not blob_verified:
+            raise Exception(f"Video file not found in Azure Blob Storage")
+
         file_size = azure_storage.get_blob_size(upload_id, filename)
         logger.info(f"[{upload_id}] Processing video from Azure ({file_size/1024/1024:.2f} MB)")
-        
+
         # Update status: downloading for processing
         update_processing_status(
             upload_id=upload_id,
@@ -397,19 +416,44 @@ async def process_azure_video(
             progress=10,
             message=f"Downloading video from cloud storage ({file_size/1024/1024:.2f} MB)..."
         )
-        
+
         # Create temporary local file for processing
         upload_dir = f"uploads/{upload_id}"
         os.makedirs(upload_dir, exist_ok=True)
         local_video_path = f"{upload_dir}/{filename}"
+
+        # Download video from Azure Blob Storage with retry logic
+        download_success = False
+        for attempt in range(3):
+            try:
+                await azure_storage.download_video(upload_id, filename, local_video_path)
+                
+                # Verify download completed successfully
+                if os.path.exists(local_video_path) and os.path.getsize(local_video_path) > 0:
+                    actual_size = os.path.getsize(local_video_path)
+                    if actual_size >= file_size * 0.95:  # Allow 5% tolerance
+                        download_success = True
+                        logger.info(f"[{upload_id}] Downloaded video for processing ({actual_size} bytes)")
+                        break
+                    else:
+                        logger.warning(f"[{upload_id}] Download size mismatch: {actual_size} vs expected {file_size}")
+                        if os.path.exists(local_video_path):
+                            os.remove(local_video_path)
+                
+                if attempt < 2:
+                    logger.warning(f"[{upload_id}] Download incomplete, retrying in {3*(attempt+1)} seconds...")
+                    await asyncio.sleep(3*(attempt+1))
+                    
+            except Exception as e:
+                if attempt < 2:
+                    logger.warning(f"[{upload_id}] Download attempt {attempt+1} failed: {str(e)}")
+                    await asyncio.sleep(3*(attempt+1))
+                else:
+                    raise Exception(f"Failed to download video from Azure after 3 attempts: {str(e)}")
         
-        # Download video from Azure Blob Storage
-        try:
-            await azure_storage.download_video(upload_id, filename, local_video_path)
-            logger.info(f"[{upload_id}] Downloaded video for processing")
-        except Exception as e:
-            raise Exception(f"Failed to download video from Azure: {str(e)}")
-        
+        if not download_success:
+            raise Exception(f"Failed to download video from Azure Blob Storage")
+
         # Update status: extracting audio
         update_processing_status(
             upload_id=upload_id,
@@ -417,27 +461,42 @@ async def process_azure_video(
             progress=20,
             message="Extracting audio from video..."
         )
-        
-        # Extract audio from video
+
+        # Extract audio from video with enhanced error handling
         audio_path = f"{upload_dir}/audio.wav"
         
-        try:
-            logger.info(f"[{upload_id}] Extracting audio")
-            (
-                ffmpeg
-                .input(local_video_path)
-                .output(audio_path, acodec='pcm_s16le', ac=1, ar='16k')
-                .run(quiet=True, overwrite_output=True)
-            )
-        except ffmpeg.Error as e:
-            error_message = e.stderr.decode() if e.stderr else str(e)
-            logger.error(f"[{upload_id}] FFmpeg error: {error_message}")
-            raise Exception(f"Failed to extract audio: {error_message}")
-        
-        # Verify audio extraction
+        for attempt in range(2):
+            try:
+                logger.info(f"[{upload_id}] Extracting audio (attempt {attempt+1})")
+                (
+                    ffmpeg
+                    .input(local_video_path)
+                    .output(audio_path, acodec='pcm_s16le', ac=1, ar='16k')
+                    .run(quiet=True, overwrite_output=True)
+                )
+                
+                # Verify audio extraction
+                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                    break
+                elif attempt == 0:
+                    logger.warning(f"[{upload_id}] Audio extraction failed, retrying...")
+                    await asyncio.sleep(2)
+                else:
+                    raise Exception("Audio extraction produced empty file")
+                    
+            except ffmpeg.Error as e:
+                error_message = e.stderr.decode() if e.stderr else str(e)
+                if attempt == 0:
+                    logger.warning(f"[{upload_id}] FFmpeg attempt 1 failed: {error_message}")
+                    await asyncio.sleep(2)
+                else:
+                    logger.error(f"[{upload_id}] FFmpeg error after retries: {error_message}")
+                    raise Exception(f"Failed to extract audio after retries: {error_message}")
+
+        # Verify final audio extraction
         if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
-            raise Exception("Audio extraction failed")
-        
+            raise Exception("Audio extraction failed - no audio file produced")
+
         # Update status: transcribing
         update_processing_status(
             upload_id=upload_id,
@@ -445,25 +504,42 @@ async def process_azure_video(
             progress=30,
             message="Transcribing audio with WhisperX..."
         )
-        
-        # Transcribe with WhisperX
-        transcript = transcribe_audio(audio_path, upload_id)
-        
+
+        # Transcribe with WhisperX with retry logic
+        transcript = None
+        for attempt in range(2):
+            try:
+                transcript = transcribe_audio(audio_path, upload_id)
+                
+                if transcript and "segments" in transcript and transcript["segments"]:
+                    logger.info(f"[{upload_id}] Transcription completed: {len(transcript['segments'])} segments")
+                    break
+                elif attempt == 0:
+                    logger.warning(f"[{upload_id}] Transcription attempt 1 failed, retrying...")
+                    await asyncio.sleep(5)
+                else:
+                    if "error" in transcript:
+                        raise Exception(f"Transcription failed: {transcript['error']}")
+                    else:
+                        raise Exception("Transcription failed: No segments generated")
+                        
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning(f"[{upload_id}] Transcription attempt 1 failed: {str(e)}")
+                    await asyncio.sleep(5)
+                else:
+                    raise Exception(f"Transcription failed after retries: {str(e)}")
+
         if not transcript or "segments" not in transcript or not transcript["segments"]:
-            if "error" in transcript:
-                raise Exception(f"Transcription failed: {transcript['error']}")
-            else:
-                raise Exception("Transcription failed: No segments generated")
-        
-        logger.info(f"[{upload_id}] Transcription completed: {len(transcript['segments'])} segments")
-        
+            raise Exception("Transcription failed: No valid transcript produced")
+
         # Save transcript
         transcript_dir = f"{upload_dir}/subtitles"
         os.makedirs(transcript_dir, exist_ok=True)
-        
+
         with open(f"{transcript_dir}/en.json", "w") as f:
             json.dump({"segments": transcript["segments"], "language": "en"}, f)
-        
+
         # Update status: generating summary
         update_processing_status(
             upload_id=upload_id,
@@ -471,13 +547,36 @@ async def process_azure_video(
             progress=50,
             message=f"Generating summary from transcript..."
         )
-        
-        # Generate summary
-        transcript_text = ' '.join([segment['text'] for segment in transcript['segments']])
-        summary = generate_summary(transcript_text, max_sentences=summary_length)
-        
-        logger.info(f"[{upload_id}] Summary generated ({len(summary)} characters)")
-        
+
+        # Generate summary with retry logic
+        summary = None
+        for attempt in range(2):
+            try:
+                transcript_text = ' '.join([segment['text'] for segment in transcript['segments']])
+                if not transcript_text.strip():
+                    raise Exception("Empty transcript text")
+                    
+                summary = generate_summary(transcript_text, max_sentences=summary_length)
+                
+                if summary and summary.strip():
+                    logger.info(f"[{upload_id}] Summary generated ({len(summary)} characters)")
+                    break
+                elif attempt == 0:
+                    logger.warning(f"[{upload_id}] Summary generation attempt 1 failed, retrying...")
+                    await asyncio.sleep(3)
+                else:
+                    raise Exception("Summary generation produced empty result")
+                    
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning(f"[{upload_id}] Summary generation attempt 1 failed: {str(e)}")
+                    await asyncio.sleep(3)
+                else:
+                    raise Exception(f"Summary generation failed after retries: {str(e)}")
+
+        if not summary or not summary.strip():
+            raise Exception("Summary generation failed: No valid summary produced")
+
         # Prepare results
         result = {
             "upload_id": upload_id,
@@ -486,44 +585,93 @@ async def process_azure_video(
             "summary": {"en": summary},
             "translations": {}
         }
-        
-        # Handle translations
+
+        # Handle translations with improved error handling
         total_languages = len([lang for lang in languages if lang != "en"])
         if total_languages > 0:
             for i, lang in enumerate([l for l in languages if l != "en"], 1):
-                progress = 50 + (i / total_languages * 40)
-                
-                update_processing_status(
-                    upload_id=upload_id,
-                    status="processing", 
-                    progress=progress,
-                    message=f"Translating to {lang} ({i}/{total_languages})..."
-                )
-                
-                # Translate summary
-                translated_summary = translate_text(summary, target_lang=lang)
-                
-                # Translate transcript
-                translated_segments = []
-                for segment in transcript["segments"]:
-                    translated_text = translate_text(segment["text"], target_lang=lang)
-                    translated_segments.append({
-                        "start": segment["start"],
-                        "end": segment["end"],
-                        "text": translated_text
-                    })
-                
-                # Save translated transcript
-                with open(f"{transcript_dir}/{lang}.json", "w") as f:
-                    json.dump({"segments": translated_segments, "language": lang}, f)
-                
-                result["translations"][lang] = {
-                    "summary": translated_summary,
-                    "transcript": translated_segments
-                }
-                
-                logger.info(f"[{upload_id}] Completed translation to {lang}")
-        
+                try:
+                    progress = 50 + (i / total_languages * 40)
+                    
+                    update_processing_status(
+                        upload_id=upload_id,
+                        status="processing", 
+                        progress=progress,
+                        message=f"Translating to {lang} ({i}/{total_languages})..."
+                    )
+                    
+                    # Translate summary with retry
+                    translated_summary = None
+                    for attempt in range(2):
+                        try:
+                            translated_summary = translate_text(summary, target_lang=lang)
+                            if translated_summary and translated_summary.strip():
+                                break
+                            elif attempt == 0:
+                                await asyncio.sleep(2)
+                        except Exception as e:
+                            if attempt == 0:
+                                logger.warning(f"[{upload_id}] Summary translation to {lang} failed, retrying: {str(e)}")
+                                await asyncio.sleep(2)
+                            else:
+                                raise e
+                    
+                    if not translated_summary:
+                        raise Exception(f"Failed to translate summary to {lang}")
+                    
+                    # Translate transcript with error handling
+                    translated_segments = []
+                    segment_errors = 0
+                    max_segment_errors = min(5, len(transcript["segments"]) // 4)  # Allow up to 25% failures
+                    
+                    for segment in transcript["segments"]:
+                        try:
+                            translated_text = translate_text(segment["text"], target_lang=lang)
+                            if translated_text and translated_text.strip():
+                                translated_segments.append({
+                                    "start": segment["start"],
+                                    "end": segment["end"],
+                                    "text": translated_text
+                                })
+                            else:
+                                # Keep original text if translation fails
+                                segment_errors += 1
+                                translated_segments.append({
+                                    "start": segment["start"],
+                                    "end": segment["end"],
+                                    "text": segment["text"]  # Fallback to original
+                                })
+                                
+                        except Exception as e:
+                            segment_errors += 1
+                            logger.warning(f"[{upload_id}] Failed to translate segment: {str(e)}")
+                            
+                            # Keep original text as fallback
+                            translated_segments.append({
+                                "start": segment["start"],
+                                "end": segment["end"],
+                                "text": segment["text"]
+                            })
+                            
+                            if segment_errors > max_segment_errors:
+                                logger.warning(f"[{upload_id}] Too many translation errors for {lang}, stopping")
+                                break
+                    
+                    # Save translated transcript
+                    with open(f"{transcript_dir}/{lang}.json", "w") as f:
+                        json.dump({"segments": translated_segments, "language": lang}, f)
+                    
+                    result["translations"][lang] = {
+                        "summary": translated_summary,
+                        "transcript": translated_segments
+                    }
+                    
+                    logger.info(f"[{upload_id}] Completed translation to {lang} ({segment_errors} segment errors)")
+                    
+                except Exception as e:
+                    logger.warning(f"[{upload_id}] Translation to {lang} failed: {str(e)}")
+                    # Continue with other languages instead of failing completely
+
         # Extract metadata and thumbnail
         update_processing_status(
             upload_id=upload_id,
@@ -531,15 +679,15 @@ async def process_azure_video(
             progress=95,
             message="Finalizing video metadata..."
         )
-        
+
         try:
             from utils.helpers import get_video_metadata, extract_thumbnail
-            
+
             metadata = get_video_metadata(local_video_path)
-            
+
             thumbnail_path = f"{upload_dir}/thumbnail.jpg"
             extract_thumbnail(local_video_path, thumbnail_path)
-            
+
             # Update info.json
             info_path = f"{upload_dir}/info.json"
             if os.path.exists(info_path):
@@ -547,7 +695,7 @@ async def process_azure_video(
                     info = json.load(f)
             else:
                 info = {}
-            
+
             info.update({
                 "thumbnail": f"/uploads/{upload_id}/thumbnail.jpg",
                 "duration": metadata.get("duration", 0),
@@ -555,21 +703,21 @@ async def process_azure_video(
                 "metadata": metadata,
                 "azure_blob_url": azure_storage.get_blob_url(upload_id, filename)
             })
-            
+
             with open(info_path, "w") as f:
                 json.dump(info, f)
-            
+
             cache_result(f"video:{upload_id}:info", info)
-            
+
         except Exception as e:
             logger.warning(f"[{upload_id}] Error extracting metadata: {str(e)}")
-        
+
         # Save results
         with open(f"{upload_dir}/result.json", "w") as f:
             json.dump(result, f)
-        
+
         cache_result(f"upload:{upload_id}:result", result)
-        
+
         # Clean up local video file to save space (keep audio for potential reprocessing)
         try:
             if os.path.exists(local_video_path):
@@ -577,7 +725,7 @@ async def process_azure_video(
                 logger.info(f"[{upload_id}] Cleaned up local video file")
         except Exception as e:
             logger.warning(f"[{upload_id}] Failed to clean up local video: {str(e)}")
-        
+
         # Update final status
         update_processing_status(
             upload_id=upload_id,
@@ -585,15 +733,16 @@ async def process_azure_video(
             progress=100,
             message="Processing completed successfully."
         )
-        
+
         logger.info(f"[{upload_id}] Processing completed successfully")
-        
+
     except Exception as e:
         error_message = str(e)
         error_traceback = traceback.format_exc()
+
         logger.error(f"[{upload_id}] Processing failed: {error_message}")
         logger.error(f"[{upload_id}] Full traceback:\n{error_traceback}")
-        
+
         # Update status to failed
         try:
             update_processing_status(
@@ -604,7 +753,7 @@ async def process_azure_video(
             )
         except Exception as status_error:
             logger.error(f"[{upload_id}] Failed to update status: {str(status_error)}")
-        
+
         # Log error
         try:
             upload_dir = f"uploads/{upload_id}"
@@ -632,3 +781,60 @@ async def upload_video_legacy(
 
 # Remove chunked upload endpoints as they're no longer needed
 # The signed URL approach handles large files much more efficiently
+
+@router.get("/ping")
+async def ping():
+    """Simple ping endpoint for network diagnostics"""
+    return {"status": "ok", "timestamp": time.time()}
+
+@router.get("/status/{upload_id}")
+async def get_upload_status(
+    upload_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get the current processing status of an upload"""
+    try:
+        # First check Redis cache
+        status_data = get_cached_result(f"upload:{upload_id}:status")
+        
+        if not status_data:
+            # Fallback to file system
+            status_file = f"uploads/{upload_id}/status.json"
+            if os.path.exists(status_file):
+                with open(status_file, "r") as f:
+                    status_data = json.load(f)
+            else:
+                # Check if it's completed but status not found
+                result_file = f"uploads/{upload_id}/result.json"
+                if os.path.exists(result_file):
+                    return {
+                        "status": "completed",
+                        "upload_id": upload_id,
+                        "progress": 100,
+                        "message": "Processing completed",
+                        "updated_at": time.time()
+                    }
+                
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Upload not found"
+                )
+        
+        # Verify user has access to this upload
+        video_info = get_cached_result(f"video:{upload_id}:info")
+        if video_info and video_info.get("user_id") != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+        
+        return status_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting upload status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get upload status"
+        )

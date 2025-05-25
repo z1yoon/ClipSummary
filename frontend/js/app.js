@@ -506,7 +506,7 @@ ${blockIds.map(blockId => `  <Latest>${blockId}</Latest>`).join('\n')}
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/xml',
-                    'x-ms-blob-content-type': 'video/mp4',
+                    'x-ms-blob-content-type': file.type || 'video/mp4',
                     // HTTP/2 optimization headers
                     'Connection': 'keep-alive',
                     'Cache-Control': 'no-cache'
@@ -517,7 +517,7 @@ ${blockIds.map(blockId => `  <Latest>${blockId}</Latest>`).join('\n')}
             });
             
             if (!commitResponse.ok) {
-                const errorText = await commitResponse.text();
+                const errorText = await commitResponse.text().catch(() => 'Unknown error');
                 throw new Error(`Failed to commit blocks: ${commitResponse.status} - ${errorText}`);
             }
             
