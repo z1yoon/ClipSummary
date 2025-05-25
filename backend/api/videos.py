@@ -60,7 +60,8 @@ async def get_video_details(
             video_user_id = video_info.get("user_id")
             current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
             
-            if video_user_id != current_user_id:
+            # Convert both to strings for comparison to handle type mismatches
+            if str(video_user_id) != str(current_user_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You don't have permission to access this video"
@@ -79,7 +80,8 @@ async def get_video_details(
             video_user_id = result_data.get("user_id")
             current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
             
-            if video_user_id != current_user_id:
+            # Convert both to strings for comparison to handle type mismatches
+            if str(video_user_id) != str(current_user_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You don't have permission to access this video"
@@ -179,12 +181,14 @@ async def get_video_subtitles(
         if os.path.exists(info_path):
             with open(info_path, "r") as f:
                 info_data = json.load(f)
-            if info_data.get("user_id") == current_user_id:
+            # Convert both to strings for comparison to handle type mismatches
+            if str(info_data.get("user_id")) == str(current_user_id):
                 user_verified = True
         elif os.path.exists(result_path):
             with open(result_path, "r") as f:
                 result_data = json.load(f)
-            if result_data.get("user_id") == current_user_id:
+            # Convert both to strings for comparison to handle type mismatches
+            if str(result_data.get("user_id")) == str(current_user_id):
                 user_verified = True
         
         if not user_verified:
@@ -334,7 +338,8 @@ async def get_video_summary(
         video_user_id = result.get("user_id")
         current_user_id = current_user.id if hasattr(current_user, 'id') else current_user.get('id')
         
-        if video_user_id != current_user_id:
+        # Convert both to strings for comparison to handle type mismatches
+        if str(video_user_id) != str(current_user_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to access this video"

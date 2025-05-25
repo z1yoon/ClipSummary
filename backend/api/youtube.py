@@ -333,10 +333,34 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
     """Background task to process YouTube audio"""
     # Import at the top to avoid conflicts
     import traceback
-    from utils.cache import cache_result, update_processing_status
-    from ai.whisperx import transcribe_audio
-    from ai.summarizer import generate_summary
-    from ai.translator import translate_text
+    
+    # Define a helper function to update status with the correct cache key format
+    def update_youtube_status(status: str, progress: float = 0, message: str = "", error: str = None):
+        """Update processing status using the same cache key format as regular uploads"""
+        status_data = {
+            "status": status,
+            "upload_id": processing_id,
+            "progress": float(progress),
+            "message": message,
+            "updated_at": time.time()
+        }
+        
+        if error:
+            status_data["error"] = error
+        
+        # Use the same cache key format that the frontend expects
+        upload_cache_key = f"upload:{processing_id}:status"
+        cache_result(upload_cache_key, status_data, ttl=3600)
+        
+        # Also save to file system as fallback
+        try:
+            status_dir = f"uploads/{processing_id}"
+            os.makedirs(status_dir, exist_ok=True)
+            
+            with open(f"{status_dir}/status.json", "w") as f:
+                json.dump(status_data, f)
+        except Exception as e:
+            print(f"Error saving status to file: {str(e)}")
     
     try:
         print(f"🚀 Starting YouTube processing for processing ID: {processing_id} (YouTube ID: {youtube_video_id})")
@@ -346,8 +370,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         audio_path = f"uploads/{processing_id}/audio.wav"
         
         # Initialize status tracking using processing_id with more detailed progress
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="processing",
             progress=5,
             message="Initializing YouTube video download..."
@@ -371,8 +394,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             'audioformat': 'wav',
         }
         
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="processing",
             progress=10,
             message="Connecting to YouTube and preparing download..."
@@ -381,8 +403,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         print(f"🔽 Starting download with yt-dlp for: {url}")
         
         # Update progress during download
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="processing",
             progress=15,
             message="Downloading YouTube video audio stream..."
@@ -394,8 +415,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
                 ydl.download([url])
                 print("✅ yt-dlp download completed")
                 
-                update_processing_status(
-                    upload_id=processing_id,
+                update_youtube_status(
                     status="processing",
                     progress=25,
                     message="Audio download completed, processing audio file..."
@@ -428,8 +448,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         if audio_size < 10000:  # Less than 10KB is suspicious
             raise Exception("Downloaded audio file is too small and likely invalid")
         
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="processing",
             progress=35,
             message=f"Audio file prepared ({audio_size/1024/1024:.1f}MB). Starting transcription..."
@@ -444,8 +463,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         
         print(f"✅ Transcription completed with {len(transcript['segments'])} segments")
         
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="processing",
             progress=65,
             message=f"Transcription completed ({len(transcript['segments'])} segments). Generating summary..."
@@ -457,8 +475,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         
         print(f"📝 Summary generated, length: {len(summary)} characters")
         
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="processing",
             progress=75,
             message="Summary generated. Preparing final results..."
@@ -482,8 +499,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         # Translate to requested languages
         translation_languages = [lang for lang in languages if lang != "en"]
         if len(translation_languages) > 0:
-            update_processing_status(
-                upload_id=processing_id,
+            update_youtube_status(
                 status="processing",
                 progress=80,
                 message=f"Translating content to {len(translation_languages)} language(s)..."
@@ -492,8 +508,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
             for i, lang in enumerate(translation_languages):
                 print(f"🌐 Translating to {lang} ({i+1}/{len(translation_languages)})")
                 
-                update_processing_status(
-                    upload_id=processing_id,
+                update_youtube_status(
                     status="processing",
                     progress=80 + (i / len(translation_languages)) * 15,
                     message=f"Translating to {lang} ({i+1}/{len(translation_languages)})..."
@@ -512,8 +527,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
                 }
                 print(f"✅ Translation to {lang} completed")
         
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="processing",
             progress=98,
             message="Saving results and finalizing..."
@@ -526,8 +540,7 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         # Cache the result using YouTube video ID
         cache_result(cache_key, result)
         
-        update_processing_status(
-            upload_id=processing_id,
+        update_youtube_status(
             status="completed",
             progress=100,
             message="YouTube video processing completed successfully!"
@@ -541,11 +554,9 @@ async def process_youtube_audio(processing_id: str, youtube_video_id: str, title
         print(f"💥 Error processing YouTube video {processing_id}: {error_message}")
         print(f"💥 Full traceback:\n{error_traceback}")
         
-        # Update status to failed - use the cache version to avoid conflicts
+        # Update status to failed using correct cache key
         try:
-            from utils.cache import update_processing_status
-            update_processing_status(
-                upload_id=processing_id,
+            update_youtube_status(
                 status="failed",
                 progress=0,
                 message=error_message,

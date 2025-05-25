@@ -386,9 +386,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
         let timeoutId = null;
-        let maxRetries = 15; // Reduced from 40 to 15 retries (about 3 minutes with longer intervals)
+        let maxRetries = 30; // Increased from 15 to 30 retries (about 10+ minutes)
         let retryCount = 0;
-        let pollInterval = 5000; // Start with 5 second intervals
+        let pollInterval = 3000; // Start with 3 second intervals (faster initial polling)
         
         // Cleanup function to stop polling
         const cleanup = () => {
@@ -461,12 +461,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     cleanup();
                     
                 } else {
-                    // Increase poll interval after first few checks to reduce server load
-                    if (retryCount > 5) {
-                        pollInterval = 10000; // 10 seconds after 5 attempts
+                    // More gradual increase in poll intervals
+                    if (retryCount > 3) {
+                        pollInterval = 5000; // 5 seconds after 3 attempts
                     }
-                    if (retryCount > 10) {
-                        pollInterval = 15000; // 15 seconds after 10 attempts
+                    if (retryCount > 8) {
+                        pollInterval = 8000; // 8 seconds after 8 attempts
+                    }
+                    if (retryCount > 15) {
+                        pollInterval = 12000; // 12 seconds after 15 attempts
                     }
                     
                     // Continue checking status with longer intervals
@@ -484,13 +487,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     cleanup();
                 } else {
                     // Continue checking despite errors with longer delay
-                    timeoutId = setTimeout(checkStatus, 10000);
+                    timeoutId = setTimeout(checkStatus, 8000); // Reduced from 10s to 8s
                 }
             }
         };
 
         // Start checking status after a brief delay
-        timeoutId = setTimeout(checkStatus, 2000);
+        timeoutId = setTimeout(checkStatus, 1000); // Reduced from 2s to 1s
         
         // Return cleanup function so it can be called externally if needed
         return cleanup;
@@ -760,9 +763,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function trackProcessing(uploadId) {
         let processingStartTime = Date.now();
         let timeoutId = null;
-        let maxRetries = 15; // Reduced from 40 to 15 retries (about 3 minutes with longer intervals)
+        let maxRetries = 30; // Increased from 15 to 30 retries (about 10+ minutes)
         let retryCount = 0;
-        let pollInterval = 5000; // Start with 5 second intervals
+        let pollInterval = 3000; // Start with 3 second intervals (faster initial polling)
         
         // Cleanup function to stop polling
         const cleanup = () => {
@@ -835,12 +838,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     cleanup();
                     
                 } else {
-                    // Increase poll interval after first few checks to reduce server load
-                    if (retryCount > 5) {
-                        pollInterval = 10000; // 10 seconds after 5 attempts
+                    // More gradual increase in poll intervals
+                    if (retryCount > 3) {
+                        pollInterval = 5000; // 5 seconds after 3 attempts
                     }
-                    if (retryCount > 10) {
-                        pollInterval = 15000; // 15 seconds after 10 attempts
+                    if (retryCount > 8) {
+                        pollInterval = 8000; // 8 seconds after 8 attempts
+                    }
+                    if (retryCount > 15) {
+                        pollInterval = 12000; // 12 seconds after 15 attempts
                     }
                     
                     // Continue checking status with longer intervals
@@ -858,13 +864,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     cleanup();
                 } else {
                     // Continue checking despite errors with longer delay
-                    timeoutId = setTimeout(checkStatus, 10000);
+                    timeoutId = setTimeout(checkStatus, 8000); // Reduced from 10s to 8s
                 }
             }
         };
 
         // Start checking status after a brief delay
-        timeoutId = setTimeout(checkStatus, 2000);
+        timeoutId = setTimeout(checkStatus, 1000); // Reduced from 2s to 1s
         
         // Return cleanup function so it can be called externally if needed
         return cleanup;

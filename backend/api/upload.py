@@ -648,7 +648,6 @@ async def process_uploaded_video(
     # Import at the top to avoid conflicts
     import traceback
     import ffmpeg
-    from utils.cache import update_processing_status, cache_result
     from ai.whisperx import transcribe_audio
     from ai.summarizer import generate_summary
     from ai.translator import translate_text
@@ -972,7 +971,34 @@ async def process_uploaded_video(
         # Cache the result
         cache_result(f"upload:{upload_id}:result", result)
         
-        # Update status to completed
+        # CRITICAL: Update status to completed with explicit file and cache writes
+        print(f"[{upload_id}] Setting final completion status")
+        
+        final_status = {
+            "status": "completed",
+            "upload_id": upload_id,
+            "progress": 100,
+            "message": "Processing completed successfully.",
+            "updated_at": time.time()
+        }
+        
+        # Write status file directly (bypass potential function conflicts)
+        try:
+            status_file = f"uploads/{upload_id}/status.json"
+            with open(status_file, "w") as f:
+                json.dump(final_status, f)
+            print(f"[{upload_id}] Status file written: {status_file}")
+        except Exception as e:
+            print(f"[{upload_id}] Error writing status file: {str(e)}")
+        
+        # Cache the final status directly
+        try:
+            cache_result(f"upload:{upload_id}:status", final_status, ttl=3600)
+            print(f"[{upload_id}] Status cached in Redis")
+        except Exception as e:
+            print(f"[{upload_id}] Error caching status: {str(e)}")
+        
+        # Also call the function for consistency
         update_processing_status(
             upload_id=upload_id,
             status="completed",
@@ -980,7 +1006,7 @@ async def process_uploaded_video(
             message="Processing completed successfully."
         )
         
-        print(f"[{upload_id}] Processing completed successfully")
+        print(f"[{upload_id}] Processing completed successfully - all status updates applied")
         
     except Exception as e:
         # Update status to failed
@@ -989,17 +1015,38 @@ async def process_uploaded_video(
         print(f"[{upload_id}] Processing failed: {error_message}")
         print(f"[{upload_id}] Full traceback:\n{error_traceback}")
         
-        # Update status to failed - use the cache version to avoid conflicts
+        # Write failed status directly to file and cache
+        failed_status = {
+            "status": "failed",
+            "upload_id": upload_id,
+            "progress": 0,
+            "message": error_message,
+            "error": error_message,
+            "updated_at": time.time()
+        }
+        
         try:
-            update_processing_status(
-                upload_id=upload_id,
-                status="failed",
-                progress=0,
-                message=error_message,
-                error=error_message
-            )
+            status_file = f"uploads/{upload_id}/status.json"
+            with open(status_file, "w") as f:
+                json.dump(failed_status, f)
+            print(f"[{upload_id}] Failed status file written")
         except Exception as status_error:
-            print(f"[{upload_id}] Failed to update status: {str(status_error)}")
+            print(f"[{upload_id}] Failed to write status file: {str(status_error)}")
+        
+        try:
+            cache_result(f"upload:{upload_id}:status", failed_status, ttl=3600)
+            print(f"[{upload_id}] Failed status cached")
+        except Exception as cache_error:
+            print(f"[{upload_id}] Failed to cache status: {str(cache_error)}")
+        
+        # Also call function for consistency
+        update_processing_status(
+            upload_id=upload_id,
+            status="failed",
+            progress=0,
+            message=error_message,
+            error=error_message
+        )
         
         # Log the error
         try:
