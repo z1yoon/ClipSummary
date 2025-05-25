@@ -14,6 +14,8 @@ import traceback
 import logging
 import subprocess
 import ffmpeg
+import math
+from concurrent.futures import ThreadPoolExecutor
 
 # Change relative imports to absolute imports
 from ai.whisperx import transcribe_audio, load_models, asr_model, is_model_loading, wait_for_model
@@ -140,7 +142,7 @@ async def get_whisperx_loading_status():
     }
 
 # Processing status tracking with Redis
-def update_processing_status(upload_id: str, status: str, progress: float = 0, message: str = ""):
+def update_processing_status(upload_id: str, status: str, progress: float = 0, message: str = "", error: str = None):
     """Update the processing status in Redis"""
     status_data = {
         "status": status,
@@ -149,6 +151,9 @@ def update_processing_status(upload_id: str, status: str, progress: float = 0, m
         "message": message,
         "updated_at": time.time()
     }
+    
+    if error:
+        status_data["error"] = error
     
     # Cache with a longer TTL (3 days) to keep processing history
     cache_result(f"upload:{upload_id}:status", status_data, ttl=259200)
@@ -639,7 +644,7 @@ async def process_uploaded_video(
     summary_length: int,
     user_id: str
 ):
-    """Background task to process uploaded video."""
+    """Background task to process uploaded video with automatic chunking for large files."""
     # Import at the top to avoid conflicts
     import traceback
     import ffmpeg
@@ -672,10 +677,22 @@ async def process_uploaded_video(
         else:
             print(f"[{upload_id}] Source video found: {video_path}")
         
-        # Get file size for logging
+        # Get file size and check if we should use chunked processing
         file_size = os.path.getsize(video_path)
-        print(f"[{upload_id}] Starting processing of {filename} ({file_size/1024/1024:.2f} MB)")
-
+        file_size_gb = file_size / (1024 * 1024 * 1024)
+        
+        print(f"[{upload_id}] Video file size: {file_size_gb:.2f}GB")
+        
+        # Use chunked processing for files larger than 5GB
+        if file_size_gb > 5:
+            print(f"[{upload_id}] Large file detected ({file_size_gb:.2f}GB), using chunked processing")
+            return await process_large_video_in_chunks(
+                video_path, upload_id, filename, languages, summary_length, user_id
+            )
+        
+        # For files <= 5GB, use the standard processing method
+        print(f"[{upload_id}] Using standard processing for {file_size_gb:.2f}GB file")
+        
         # For FFmpeg processing, we'll use the original path directly
         processing_video_path = video_path
         
@@ -1290,3 +1307,283 @@ async def finalize_chunked_upload(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to finalize upload: {str(e)}"
         )
+
+async def process_large_video_in_chunks(
+    video_path: str,
+    upload_id: str,
+    filename: str,
+    languages: List[str],
+    summary_length: int,
+    user_id: str,
+    chunk_duration_minutes: int = 1  # Split into 1-minute chunks
+):
+    """Process large videos by splitting them into smaller chunks for faster processing."""
+    try:
+        file_size = os.path.getsize(video_path)
+        file_size_gb = file_size / (1024 * 1024 * 1024)
+        
+        print(f"[{upload_id}] Processing large video ({file_size_gb:.2f}GB) in chunks")
+        
+        # Get video duration to calculate number of chunks
+        from utils.helpers import get_video_metadata
+        metadata = get_video_metadata(video_path)
+        duration_seconds = metadata.get("duration", 0)
+        duration_minutes = duration_seconds / 60
+        
+        if duration_minutes <= chunk_duration_minutes:
+            # Video is short enough, process normally
+            return await process_uploaded_video(video_path, upload_id, filename, languages, summary_length, user_id)
+        
+        # Calculate number of chunks
+        num_chunks = math.ceil(duration_minutes / chunk_duration_minutes)
+        chunk_duration_seconds = chunk_duration_minutes * 60
+        
+        print(f"[{upload_id}] Splitting {duration_minutes:.1f} minute video into {num_chunks} chunks of {chunk_duration_minutes} minute(s) each")
+        
+        update_processing_status(
+            upload_id=upload_id,
+            status="processing",
+            progress=5,
+            message=f"Splitting large video into {num_chunks} chunks for faster processing..."
+        )
+        
+        # Create chunks directory
+        chunks_dir = f"uploads/{upload_id}/video_chunks"
+        os.makedirs(chunks_dir, exist_ok=True)
+        
+        # Split video into chunks
+        chunk_paths = []
+        for i in range(num_chunks):
+            start_time = i * chunk_duration_seconds
+            chunk_path = f"{chunks_dir}/chunk_{i:03d}.mp4"
+            
+            try:
+                # Extract chunk using FFmpeg
+                (
+                    ffmpeg
+                    .input(video_path, ss=start_time, t=chunk_duration_seconds)
+                    .output(chunk_path, vcodec='copy', acodec='copy')
+                    .run(quiet=True, overwrite_output=True)
+                )
+                
+                if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
+                    chunk_paths.append(chunk_path)
+                    print(f"[{upload_id}] Created chunk {i+1}/{num_chunks}: {os.path.getsize(chunk_path)/1024/1024:.1f}MB")
+                else:
+                    print(f"[{upload_id}] Warning: Chunk {i+1} is empty or missing")
+                    
+            except Exception as e:
+                print(f"[{upload_id}] Error creating chunk {i+1}: {str(e)}")
+        
+        if not chunk_paths:
+            raise Exception("Failed to create any video chunks")
+        
+        print(f"[{upload_id}] Successfully created {len(chunk_paths)} video chunks")
+        
+        # Process chunks in parallel
+        update_processing_status(
+            upload_id=upload_id,
+            status="processing",
+            progress=15,
+            message=f"Processing {len(chunk_paths)} video chunks in parallel..."
+        )
+        
+        # Use ThreadPoolExecutor to process chunks in parallel
+        max_workers = min(4, len(chunk_paths))  # Limit concurrent processing
+        chunk_results = []
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all chunk processing tasks
+            future_to_chunk = {}
+            for i, chunk_path in enumerate(chunk_paths):
+                future = executor.submit(
+                    process_video_chunk,
+                    chunk_path,
+                    upload_id,
+                    i,
+                    len(chunk_paths)
+                )
+                future_to_chunk[future] = (i, chunk_path)
+            
+            # Collect results as they complete
+            completed_futures = []
+            for future in future_to_chunk:
+                completed_futures.append(future)
+            
+            # Wait for all futures to complete
+            for future in completed_futures:
+                try:
+                    chunk_index, chunk_path = future_to_chunk[future]
+                    result = future.result()  # This will block until the future completes
+                    chunk_results.append((chunk_index, result))
+                    
+                    # Update progress
+                    progress = 15 + (len(chunk_results) / len(chunk_paths)) * 60
+                    update_processing_status(
+                        upload_id=upload_id,
+                        status="processing",
+                        progress=progress,
+                        message=f"Processed chunk {len(chunk_results)}/{len(chunk_paths)}"
+                    )
+                    
+                except Exception as e:
+                    print(f"[{upload_id}] Error processing chunk: {str(e)}")
+        
+        # Sort results by chunk index
+        chunk_results.sort(key=lambda x: x[0])
+        
+        # Merge transcription results
+        update_processing_status(
+            upload_id=upload_id,
+            status="processing",
+            progress=80,
+            message="Merging chunk transcriptions..."
+        )
+        
+        merged_transcript = merge_chunk_transcripts([result[1] for result in chunk_results])
+        
+        # Generate summary from merged transcript
+        update_processing_status(
+            upload_id=upload_id,
+            status="processing",
+            progress=85,
+            message="Generating summary from merged transcript..."
+        )
+        
+        from ai.summarizer import generate_summary
+        from ai.translator import translate_text
+        
+        transcript_text = ' '.join([segment['text'] for segment in merged_transcript['segments']])
+        summary = generate_summary(transcript_text, max_sentences=summary_length)
+        
+        # Handle translations
+        result = {
+            "upload_id": upload_id,
+            "filename": filename,
+            "transcript": merged_transcript,
+            "summary": {"en": summary},
+            "translations": {}
+        }
+        
+        # Process translations
+        for lang in languages:
+            if lang != "en":
+                update_processing_status(
+                    upload_id=upload_id,
+                    status="processing",
+                    progress=90,
+                    message=f"Translating to {lang}..."
+                )
+                
+                translated_summary = translate_text(summary, target_lang=lang)
+                translated_segments = []
+                
+                for segment in merged_transcript["segments"]:
+                    translated_text = translate_text(segment["text"], target_lang=lang)
+                    translated_segments.append({
+                        "start": segment["start"],
+                        "end": segment["end"],
+                        "text": translated_text
+                    })
+                
+                result["translations"][lang] = {
+                    "summary": translated_summary,
+                    "transcript": translated_segments
+                }
+        
+        # Clean up chunk files
+        try:
+            shutil.rmtree(chunks_dir)
+            print(f"[{upload_id}] Cleaned up video chunks directory")
+        except Exception as e:
+            print(f"[{upload_id}] Warning: Failed to clean up chunks: {str(e)}")
+        
+        # Save and finalize results
+        with open(f"uploads/{upload_id}/result.json", "w") as f:
+            json.dump(result, f)
+        
+        cache_result(f"upload:{upload_id}:result", result)
+        
+        update_processing_status(
+            upload_id=upload_id,
+            status="completed",
+            progress=100,
+            message="Large video processing completed successfully."
+        )
+        
+        print(f"[{upload_id}] Large video chunk processing completed successfully")
+        
+    except Exception as e:
+        error_message = f"Error processing large video in chunks: {str(e)}"
+        print(f"[{upload_id}] {error_message}")
+        update_processing_status(
+            upload_id=upload_id,
+            status="failed",
+            progress=0,
+            message=error_message,
+            error=error_message
+        )
+        raise
+
+def process_video_chunk(chunk_path: str, upload_id: str, chunk_index: int, total_chunks: int):
+    """Process a single video chunk (extract audio and transcribe)."""
+    try:
+        print(f"[{upload_id}] Processing chunk {chunk_index + 1}/{total_chunks}")
+        
+        # Extract audio from chunk
+        audio_path = f"{chunk_path.replace('.mp4', '.wav')}"
+        
+        (
+            ffmpeg
+            .input(chunk_path)
+            .output(audio_path, acodec='pcm_s16le', ac=1, ar='16k')
+            .run(quiet=True, overwrite_output=True)
+        )
+        
+        if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+            raise Exception(f"Failed to extract audio from chunk {chunk_index}")
+        
+        # Transcribe chunk
+        from ai.whisperx import transcribe_audio
+        transcript = transcribe_audio(audio_path, f"{upload_id}_chunk_{chunk_index}")
+        
+        # Clean up chunk audio file
+        try:
+            os.remove(audio_path)
+        except Exception:
+            pass
+        
+        print(f"[{upload_id}] Completed processing chunk {chunk_index + 1}/{total_chunks}")
+        return transcript
+        
+    except Exception as e:
+        print(f"[{upload_id}] Error processing chunk {chunk_index}: {str(e)}")
+        raise
+
+def merge_chunk_transcripts(chunk_transcripts):
+    """Merge multiple chunk transcripts into a single transcript with correct timing."""
+    merged_segments = []
+    time_offset = 0
+    
+    for i, transcript in enumerate(chunk_transcripts):
+        if not transcript or "segments" not in transcript:
+            continue
+            
+        for segment in transcript["segments"]:
+            # Adjust timing based on chunk position
+            adjusted_segment = {
+                "start": segment["start"] + time_offset,
+                "end": segment["end"] + time_offset,
+                "text": segment["text"]
+            }
+            merged_segments.append(adjusted_segment)
+        
+        # Update time offset for next chunk (assume 1 minute chunks)
+        if transcript["segments"]:
+            last_segment = transcript["segments"][-1]
+            time_offset = last_segment["end"] + time_offset
+    
+    return {
+        "segments": merged_segments,
+        "language": "en"
+    }
