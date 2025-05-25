@@ -225,12 +225,16 @@ async def generate_upload_url(
         
         logger.info(f"Generated signed upload URL for user {current_user.username}: {upload_id}")
         
+        # Return response compatible with frontend expectations
         return {
             "upload_id": upload_id,
-            "upload_url": signed_url_data["upload_url"],
-            "upload_method": signed_url_data["upload_method"],
-            "headers": signed_url_data["headers"],
+            "base_url": signed_url_data["base_url"],
+            "sas_token": signed_url_data["sas_token"],
+            "blob_name": signed_url_data["blob_name"],
             "expires_at": signed_url_data["expires_at"],
+            "account_name": signed_url_data["account_name"],
+            "container_name": signed_url_data["container_name"],
+            "upload_type": signed_url_data["upload_type"],
             "message": "Upload URL generated. Upload your file directly to the provided URL."
         }
         
