@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+import asyncio
 
 class TestAPI:
     """Unit tests for API endpoints."""
@@ -10,44 +11,163 @@ class TestAPI:
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
     
-    @patch('api.youtube.download_youtube_video')
-    def test_youtube_download(self, mock_download, client):
-        """Test the YouTube download endpoint."""
-        # Mock the download function
-        mock_download.return_value = "/tmp/test_video.mp4"
-        
-        # Test request
-        response = client.post(
-            "/api/youtube/download",
-            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "languages": ["en", "ko"]}
-        )
-        
-        # Assertions
-        assert response.status_code == 200
-        assert "upload_id" in response.json()
-        assert response.json()["status"] == "processing"
-        
-        # Verify mock was called with correct parameters
-        mock_download.assert_called_once_with("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-    
-    @patch('api.upload.process_video')
-    def test_upload_video(self, mock_process, client):
-        """Test the video upload endpoint."""
-        # Mock the processing function to avoid actual processing
+    @patch('api.youtube.process_youtube_video')
+    @patch('utils.cache.update_processing_status')
+    def test_youtube_process(self, mock_update_status, mock_process, client):
+        """Test the YouTube process endpoint."""
+        # Mock the background processing function
         mock_upload_id = "test-123456"
-        mock_process.return_value = mock_upload_id
         
+        # Create a mock for the background task
+        def mock_background_task(background_tasks, func, *args, **kwargs):
+            # Simulate adding the task but don't actually run it
+            pass
+        
+        with patch('fastapi.BackgroundTasks.add_task', side_effect=mock_background_task):
+            # Test request
+            response = client.post(
+                "/api/youtube/process",
+                json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}
+            )
+            
+            # Assertions - should return 200 with upload_id
+            assert response.status_code == 200
+            data = response.json()
+            assert "upload_id" in data
+            assert data["status"] == "processing"
+    
+    @patch('api.upload.process_uploaded_video')
+    @patch('utils.cache.update_processing_status')
+    def test_upload_video(self, mock_update_status, mock_process, client):
+        """Test the video upload endpoint."""
         # Create a mock file for testing
         test_file_content = b"test video content"
         
-        # Make the request
-        response = client.post(
-            "/api/upload/video",
-            files={"file": ("test.mp4", test_file_content, "video/mp4")},
-            data={"languages": "en,ko", "summary_length": "3"}
-        )
+        # Mock the background task
+        def mock_background_task(background_tasks, func, *args, **kwargs):
+            # Simulate adding the task but don't actually run it
+            pass
+        
+        with patch('fastapi.BackgroundTasks.add_task', side_effect=mock_background_task):
+            # Make the request
+            response = client.post(
+                "/api/upload/video",
+                files={"file": ("test.mp4", test_file_content, "video/mp4")},
+                data={"languages": "en,ko", "summary_length": "3"}
+            )
+            
+            # Assertions
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "processing"
+            assert "upload_id" in data
+    
+    @patch('utils.cache.get_cached_result')
+    def test_get_upload_status(self, mock_get_cached, client):
+        """Test the upload status endpoint."""
+        # Mock cached status
+        mock_status = {
+            "status": "processing",
+            "upload_id": "test-123456",
+            "progress": 50,
+            "message": "Processing video...",
+            "updated_at": 1234567890
+        }
+        mock_get_cached.return_value = mock_status
+        
+        # Test request
+        response = client.get("/api/upload/status/test-123456")
         
         # Assertions
         assert response.status_code == 200
-        assert response.json()["status"] == "processing"
-        assert response.json()["upload_id"] == mock_upload_id
+        assert response.json() == mock_status
+    
+    @patch('utils.cache.get_cached_result')
+    @patch('os.path.exists')
+    @patch('builtins.open')
+    @patch('json.load')
+    def test_get_upload_result(self, mock_json_load, mock_open, mock_exists, mock_get_cached, client):
+        """Test the upload result endpoint."""
+        # Mock cached result
+        mock_result = {
+            "upload_id": "test-123456",
+            "filename": "test.mp4",
+            "transcript": {"segments": []},
+            "summary": {"en": "Test summary"},
+            "translations": {}
+        }
+        mock_get_cached.return_value = mock_result
+        
+        # Test request
+        response = client.get("/api/upload/result/test-123456")
+        
+        # Assertions
+        assert response.status_code == 200
+        assert response.json() == mock_result
+
+class TestCacheModule:
+    """Unit tests for the cache module."""
+    
+    @patch('utils.cache.redis.from_url')
+    def test_cache_result(self, mock_redis):
+        """Test caching functionality."""
+        from utils.cache import cache_result
+        
+        # Mock Redis client
+        mock_client = MagicMock()
+        mock_redis.return_value = mock_client
+        mock_client.ping.return_value = True
+        mock_client.setex.return_value = True
+        
+        # Test data
+        test_data = {"test": "data"}
+        
+        # Call the function
+        result = cache_result("test_key", test_data, ttl=3600)
+        
+        # Assertions
+        assert result is True
+        mock_client.setex.assert_called_once()
+    
+    @patch('utils.cache.redis.from_url')
+    def test_get_cached_result(self, mock_redis):
+        """Test retrieving cached results."""
+        from utils.cache import get_cached_result
+        
+        # Mock Redis client
+        mock_client = MagicMock()
+        mock_redis.return_value = mock_client
+        mock_client.ping.return_value = True
+        mock_client.get.return_value = '{"test": "data"}'
+        
+        # Call the function
+        result = get_cached_result("test_key")
+        
+        # Assertions
+        assert result == {"test": "data"}
+        mock_client.get.assert_called_once_with("test_key")
+    
+    @patch('os.makedirs')
+    @patch('builtins.open')
+    @patch('json.dump')
+    def test_update_processing_status(self, mock_json_dump, mock_open, mock_makedirs):
+        """Test updating processing status."""
+        from utils.cache import update_processing_status
+        
+        # Mock file operations
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+        
+        # Call the function
+        result = update_processing_status(
+            upload_id="test-123456",
+            status="processing",
+            progress=50,
+            message="Test message"
+        )
+        
+        # Assertions
+        assert result is True
+        mock_makedirs.assert_called_once()
+        mock_open.assert_called_once()
+        mock_json_dump.assert_called_once()
