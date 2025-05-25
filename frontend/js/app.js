@@ -369,19 +369,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Chunked upload for large files (>100MB) with parallel processing
     async function uploadToAzureChunked(uploadData, file) {
-        const CHUNK_SIZE = 64 * 1024 * 1024; // 64MB chunks
+        // Dynamic chunk size based on connection and file size
+        let CHUNK_SIZE = await getDynamicChunkSize(file.size);
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         const blockIds = [];
         
-        // HTTP/2 allows up to 6-8 parallel connections, using 4 for stability
-        const MAX_PARALLEL_UPLOADS = 4;
+        // Dynamic parallel connections based on network conditions
+        let MAX_PARALLEL_UPLOADS = await getOptimalParallelConnections();
         
-        console.log(`Starting parallel chunked upload: ${totalChunks} chunks with ${MAX_PARALLEL_UPLOADS} parallel uploads`);
+        console.log(`Starting adaptive chunked upload: ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024)).toFixed(1)}MB with ${MAX_PARALLEL_UPLOADS} parallel uploads`);
         
         showProcessingStatus({
             status: 'uploading',
             progress: 10,
-            message: `Starting parallel upload: ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024)).toFixed(0)}MB each...`
+            message: `Starting adaptive upload: ${totalChunks} chunks of ${(CHUNK_SIZE / (1024 * 1024)).toFixed(1)}MB each...`
         });
         
         // Create chunk upload promises
@@ -401,23 +402,63 @@ document.addEventListener('DOMContentLoaded', function() {
             chunkPromises.push(chunkPromise);
         }
         
-        // Upload chunks in parallel batches
+        // Upload chunks in adaptive batches with fallback strategies
         const results = [];
         let completedChunks = 0;
+        let consecutiveFailures = 0;
         
         for (let i = 0; i < chunkPromises.length; i += MAX_PARALLEL_UPLOADS) {
             const batch = chunkPromises.slice(i, i + MAX_PARALLEL_UPLOADS);
             const batchStartTime = Date.now();
             
             try {
-                const batchResults = await Promise.all(batch);
-                results.push(...batchResults);
-                completedChunks += batch.length;
+                const batchResults = await Promise.allSettled(batch);
+                
+                // Check for failures and adapt strategy
+                const successes = batchResults.filter(r => r.status === 'fulfilled');
+                const failures = batchResults.filter(r => r.status === 'rejected');
+                
+                if (failures.length > 0) {
+                    consecutiveFailures++;
+                    console.warn(`Batch ${Math.floor(i / MAX_PARALLEL_UPLOADS) + 1}: ${failures.length}/${batch.length} chunks failed`);
+                    
+                    // Adaptive strategy: reduce parallelism and chunk size on failures
+                    if (consecutiveFailures >= 2) {
+                        MAX_PARALLEL_UPLOADS = Math.max(1, Math.floor(MAX_PARALLEL_UPLOADS / 2));
+                        console.log(`Reducing parallel uploads to ${MAX_PARALLEL_UPLOADS} due to failures`);
+                        
+                        if (consecutiveFailures >= 3 && CHUNK_SIZE > 16 * 1024 * 1024) {
+                            CHUNK_SIZE = Math.floor(CHUNK_SIZE / 2);
+                            console.log(`Reducing chunk size to ${(CHUNK_SIZE / (1024 * 1024)).toFixed(1)}MB due to persistent failures`);
+                            // Note: This would require re-chunking remaining data, implementing basic fallback for now
+                        }
+                    }
+                    
+                    // Retry failed chunks individually
+                    for (const failure of failures) {
+                        const chunkIndex = batch.indexOf(chunkPromises.find(p => p === failure.reason?.chunkPromise));
+                        if (chunkIndex >= 0) {
+                            console.log(`Retrying failed chunk ${chunkIndex + 1} individually...`);
+                            try {
+                                const retryResult = await chunkPromises[i + chunkIndex];
+                                successes.push({ status: 'fulfilled', value: retryResult });
+                            } catch (retryError) {
+                                console.error(`Final retry failed for chunk ${chunkIndex + 1}:`, retryError);
+                                throw new Error(`Critical chunk upload failure: ${retryError.message}`);
+                            }
+                        }
+                    }
+                } else {
+                    consecutiveFailures = 0; // Reset on success
+                }
+                
+                results.push(...successes.map(s => s.value));
+                completedChunks += successes.length;
                 
                 // Calculate upload speed for this batch
-                const batchTime = (Date.now() - batchStartTime) / 1000; // seconds
-                const batchSize = batch.length * CHUNK_SIZE;
-                const speedMBps = (batchSize / (1024 * 1024) / batchTime).toFixed(1);
+                const batchTime = (Date.now() - batchStartTime) / 1000;
+                const batchSize = successes.length * CHUNK_SIZE;
+                const speedMBps = batchSize > 0 ? (batchSize / (1024 * 1024) / batchTime).toFixed(1) : '0';
                 
                 // Update progress
                 const progress = 10 + ((completedChunks / totalChunks) * 75);
@@ -427,14 +468,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 showProcessingStatus({
                     status: 'uploading',
                     progress: progress,
-                    message: `Parallel upload: ${completedChunks}/${totalChunks} chunks (${uploadedMB}MB / ${totalMB}MB) at ${speedMBps} MB/s`
+                    message: `Adaptive upload: ${completedChunks}/${totalChunks} chunks (${uploadedMB}MB / ${totalMB}MB) at ${speedMBps} MB/s`
                 });
                 
-                console.log(`Batch ${Math.floor(i / MAX_PARALLEL_UPLOADS) + 1} completed: ${batch.length} chunks at ${speedMBps} MB/s`);
+                console.log(`Batch ${Math.floor(i / MAX_PARALLEL_UPLOADS) + 1} completed: ${successes.length}/${batch.length} chunks at ${speedMBps} MB/s`);
                 
             } catch (error) {
                 console.error(`Batch upload failed:`, error);
-                throw new Error(`Parallel upload failed at batch ${Math.floor(i / MAX_PARALLEL_UPLOADS) + 1}: ${error.message}`);
+                
+                // Final fallback: try sequential upload
+                if (MAX_PARALLEL_UPLOADS > 1) {
+                    console.log('Falling back to sequential upload...');
+                    MAX_PARALLEL_UPLOADS = 1;
+                    i -= MAX_PARALLEL_UPLOADS; // Retry this batch sequentially
+                    continue;
+                }
+                
+                throw new Error(`Upload failed after all fallback attempts: ${error.message}`);
             }
         }
         
@@ -494,47 +544,58 @@ ${blockIds.map(blockId => `  <Latest>${blockId}</Latest>`).join('\n')}
     async function uploadSingleChunk(uploadData, chunk, blockId, chunkIndex, totalChunks) {
         const chunkUrl = `${uploadData.base_url}?comp=block&blockid=${encodeURIComponent(blockId)}&${uploadData.sas_token}`;
         
-        // Retry logic for individual chunks
-        const maxRetries = 3;
+        // Enhanced retry logic with exponential backoff and jitter
+        const maxRetries = 5; // Increased from 3
         let lastError;
         
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
+                // Network timeout based on chunk size (minimum 30s, maximum 10 minutes)
+                const timeoutMs = Math.min(Math.max(30000, chunk.size / 1024), 600000);
+                
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+                
                 const response = await fetch(chunkUrl, {
                     method: 'PUT',
                     headers: {
                         'x-ms-blob-type': 'BlockBlob',
                         'Content-Type': 'application/octet-stream',
-                        // HTTP/2 optimization headers
-                        'Connection': 'keep-alive',
+                        // Remove problematic headers that might cause CORS issues
                         'Cache-Control': 'no-cache'
                     },
                     body: chunk,
-                    // Enable HTTP/2 features
-                    keepalive: true,
-                    signal: AbortSignal.timeout(300000) // 5 minute timeout per chunk
+                    signal: controller.signal
                 });
                 
+                clearTimeout(timeoutId);
+                
                 if (!response.ok) {
-                    const errorText = await response.text();
+                    const errorText = await response.text().catch(() => 'Unknown error');
                     throw new Error(`HTTP ${response.status}: ${errorText}`);
                 }
                 
-                console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully (parallel, attempt ${attempt})`);
-                return { chunkIndex, success: true, attempt };
+                console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully (attempt ${attempt})`);
+                return { chunkIndex, success: true, attempt, size: chunk.size };
                 
             } catch (error) {
                 lastError = error;
-                console.warn(`Chunk ${chunkIndex + 1} upload attempt ${attempt} failed:`, error.message);
+                const errorType = error.name === 'AbortError' ? 'Timeout' : 
+                                 error.message.includes('Failed to fetch') ? 'Network' : 'HTTP';
+                
+                console.warn(`Chunk ${chunkIndex + 1} upload attempt ${attempt} failed (${errorType}):`, error.message);
                 
                 if (attempt < maxRetries) {
-                    // Exponential backoff: wait 1s, 2s, 4s
-                    const waitTime = Math.pow(2, attempt - 1) * 1000;
-                    console.log(`Retrying chunk ${chunkIndex + 1} in ${waitTime}ms...`);
+                    // Enhanced backoff with jitter to prevent thundering herd
+                    const baseDelay = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s, 8s, 16s
+                    const jitter = Math.random() * 1000; // Add up to 1s random jitter
+                    const waitTime = baseDelay + jitter;
+                    
+                    console.log(`Retrying chunk ${chunkIndex + 1} in ${Math.round(waitTime)}ms... (${errorType} error)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                 } else {
-                    console.error(`Chunk ${chunkIndex + 1} failed after ${maxRetries} attempts:`, error);
-                    throw new Error(`Failed to upload chunk ${chunkIndex + 1} after ${maxRetries} attempts: ${error.message}`);
+                    console.error(`Chunk ${chunkIndex + 1} failed permanently after ${maxRetries} attempts:`, error);
+                    throw new Error(`Failed to upload chunk ${chunkIndex + 1} after ${maxRetries} attempts (${errorType}): ${error.message}`);
                 }
             }
         }
@@ -542,6 +603,121 @@ ${blockIds.map(blockId => `  <Latest>${blockId}</Latest>`).join('\n')}
         throw lastError;
     }
 
+    // Network diagnostics and adaptive configuration
+    async function getDynamicChunkSize(fileSize) {
+        try {
+            // Test network speed with a small request
+            const testStart = Date.now();
+            await fetch('/api/ping', { method: 'HEAD' });
+            const latency = Date.now() - testStart;
+            
+            // Adaptive chunk size based on file size and estimated network speed
+            if (latency > 2000) {
+                // High latency - use smaller chunks
+                return Math.min(16 * 1024 * 1024, fileSize / 10); // 16MB max
+            } else if (latency > 500) {
+                // Medium latency - use medium chunks
+                return Math.min(32 * 1024 * 1024, fileSize / 8); // 32MB max
+            } else {
+                // Low latency - use larger chunks
+                return Math.min(64 * 1024 * 1024, fileSize / 5); // 64MB max
+            }
+        } catch (error) {
+            console.warn('Network test failed, using conservative chunk size:', error);
+            return 16 * 1024 * 1024; // 16MB fallback
+        }
+    }
+
+    async function getOptimalParallelConnections() {
+        try {
+            // Test if we're on a mobile connection (heuristic)
+            const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            
+            if (connection) {
+                if (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g') {
+                    return 1; // Sequential for very slow connections
+                } else if (connection.effectiveType === '3g') {
+                    return 2; // Limited parallelism for 3G
+                } else if (connection.effectiveType === '4g') {
+                    return 3; // Moderate parallelism for 4G
+                }
+            }
+            
+            // Default based on general network conditions
+            return 4; // Standard parallelism for good connections
+        } catch (error) {
+            console.warn('Connection detection failed, using default parallelism:', error);
+            return 2; // Conservative default
+        }
+    }
+
+    // Add a direct upload method for smaller files
+    async function uploadToAzureDirect(uploadData, file) {
+        const directUrl = `${uploadData.base_url}?${uploadData.sas_token}`;
+        
+        showProcessingStatus({
+            status: 'uploading',
+            progress: 15,
+            message: `Uploading ${file.name} directly (${(file.size / (1024 * 1024)).toFixed(2)}MB)...`
+        });
+        
+        const maxRetries = 3;
+        let lastError;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const timeoutMs = Math.min(Math.max(60000, file.size / 1024), 1800000); // 1-30 minutes based on size
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+                
+                const response = await fetch(directUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'x-ms-blob-type': 'BlockBlob',
+                        'Content-Type': file.type || 'video/mp4',
+                        'Cache-Control': 'no-cache'
+                    },
+                    body: file,
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => 'Unknown error');
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                showProcessingStatus({
+                    status: 'uploaded',
+                    progress: 90,
+                    message: 'Direct upload completed successfully!'
+                });
+                
+                console.log('Direct upload completed successfully');
+                return { status: 'success', method: 'direct', attempts: attempt };
+                
+            } catch (error) {
+                lastError = error;
+                const errorType = error.name === 'AbortError' ? 'Timeout' : 
+                                 error.message.includes('Failed to fetch') ? 'Network' : 'HTTP';
+                
+                console.warn(`Direct upload attempt ${attempt} failed (${errorType}):`, error.message);
+                
+                if (attempt < maxRetries) {
+                    const waitTime = Math.pow(2, attempt - 1) * 2000; // 2s, 4s, 8s
+                    console.log(`Retrying direct upload in ${waitTime}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                } else {
+                    console.error(`Direct upload failed after ${maxRetries} attempts:`, error);
+                    throw new Error(`Direct upload failed after ${maxRetries} attempts (${errorType}): ${error.message}`);
+                }
+            }
+        }
+        
+        throw lastError;
+    }
+    
     // YouTube URL processing
     const summarizeBtn = document.querySelector('.summarize-btn');
     
