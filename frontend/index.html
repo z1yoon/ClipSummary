@@ -3,10 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClipSummary - Summarize Videos with AI</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <title>ClipSummary - Video Summary and Translation Tool</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/processing-status.css">
+    <link rel="icon" type="image/svg+xml" href="images/favicons/favicon.svg">
 </head>
 <body>
     <div class="background">
@@ -20,27 +24,30 @@
             <div class="logo">
                 <h1>ClipSummary<span class="registered">®</span></h1>
             </div>
-            <div class="nav-buttons">
-                <a href="#" class="btn btn-dark">
-                    <i class="fa-solid fa-sign-in"></i>
-                    Login
-                </a>
-                <a href="#" class="btn btn-primary">Register Now</a>
-            </div>
+            <nav class="main-nav">
+                <ul class="auth-links">
+                    <!-- These links will be replaced by JavaScript based on login status -->
+                    <li><a href="/login.html" class="btn btn-outline login-btn">
+                        <span>Login</span>
+                        <i class="fas fa-sign-in-alt"></i>
+                    </a></li>
+                    <li><a href="/signup.html" class="btn btn-primary">Register Now</a></li>
+                </ul>
+            </nav>
         </header>
 
         <main>
             <div class="hero-section">
-                <h2>Drag and drop your video or enter a URL</h2>
-                <p>This tool provides concise video summaries, offers optional audio transcriptions, and generates subtitles in your selected language</p>
+                <h2>Turn Any Video into a Summary</h2>
+                <p>Get concise video summaries, with optional audio transcriptions and subtitles in your selected language</p>
             </div>
 
             <div class="actions">
                 <div class="url-input-container">
                     <div class="url-input">
                         <i class="fa-solid fa-link"></i>
+                        <input type="text" placeholder="Enter YouTube URL here">
                         <span class="cursor">|</span>
-                        <input type="text" placeholder="Enter the link here">
                     </div>
                     <button class="btn btn-primary summarize-btn">Summarize Now</button>
                 </div>
@@ -63,8 +70,113 @@
                         <p>your video file here to start summarizing</p>
                     </div>
                 </div>
+                <!-- New inline processing status bar -->
+                <div class="inline-processing-status" style="display: none;">
+                    <div class="inline-progress-bar">
+                        <div class="inline-progress-fill"></div>
+                    </div>
+                    <div class="inline-status-text">Ready to upload</div>
+                </div>
+            </div>
+            
+            <div class="main-content">
             </div>
         </main>
+    </div>
+    
+    <div id="detailed-processing-status" style="display: none;">
+        <div class="processing-status-container">
+            <div class="processing-close" id="close-processing-status">
+                <i class="fas fa-times"></i>
+            </div>
+            <div class="processing-status-header">
+                <i class="fas fa-cog fa-spin"></i>
+                <h3>Processing Your Video</h3>
+            </div>
+            
+            <div class="processing-progress">
+                <div class="processing-progress-bar" style="width: 0%"></div>
+            </div>
+            
+            <div class="processing-stages">
+                <!-- Stage 1: Video Upload -->
+                <div class="processing-stage" data-stage="upload">
+                    <div class="stage-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <div class="stage-details">
+                        <div class="stage-name">Uploading Video</div>
+                        <div class="stage-description">Transferring your video to our servers</div>
+                        <div class="stage-time"></div>
+                    </div>
+                </div>
+                
+                <!-- Stage 2: Audio Extraction -->
+                <div class="processing-stage" data-stage="audio">
+                    <div class="stage-icon">
+                        <i class="fas fa-volume-up"></i>
+                    </div>
+                    <div class="stage-details">
+                        <div class="stage-name">Audio Processing</div>
+                        <div class="stage-description">Extracting audio from your video</div>
+                        <div class="stage-time"></div>
+                    </div>
+                </div>
+                
+                <!-- Stage 3: Speech Recognition -->
+                <div class="processing-stage" data-stage="transcribe">
+                    <div class="stage-icon">
+                        <i class="fas fa-headphones"></i>
+                    </div>
+                    <div class="stage-details">
+                        <div class="stage-name">Speech Recognition</div>
+                        <div class="stage-description">Converting speech to text</div>
+                        <div class="stage-time"></div>
+                    </div>
+                </div>
+                
+                <!-- Stage 4: Text Analysis -->
+                <div class="processing-stage" data-stage="align">
+                    <div class="stage-icon">
+                        <i class="fas fa-align-left"></i>
+                    </div>
+                    <div class="stage-details">
+                        <div class="stage-name">Text Processing</div>
+                        <div class="stage-description">Aligning text with audio timestamps</div>
+                        <div class="stage-time"></div>
+                    </div>
+                </div>
+                
+                <!-- Stage 5: Speaker Identification -->
+                <div class="processing-stage" data-stage="speaker">
+                    <div class="stage-icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <div class="stage-details">
+                        <div class="stage-name">Speaker Analysis</div>
+                        <div class="stage-description">Identifying different speakers in the audio</div>
+                        <div class="stage-time"></div>
+                    </div>
+                </div>
+                
+                <!-- Stage 6: Summary Generation -->
+                <div class="processing-stage" data-stage="summary">
+                    <div class="stage-icon">
+                        <i class="fas fa-file-alt"></i>
+                    </div>
+                    <div class="stage-details">
+                        <div class="stage-name">Summary Generation</div>
+                        <div class="stage-description">Creating a concise summary of the content</div>
+                        <div class="stage-time"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="processing-summary">
+                <div class="processing-elapsed">Elapsed time: 00:00</div>
+                <div class="processing-message">Starting processing...</div>
+            </div>
+        </div>
     </div>
 
     <script src="js/app.js"></script>

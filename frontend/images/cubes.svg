@@ -1,6 +1,24 @@
-<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- 3D Cube elements with blur effects -->
-  <rect width="118.434" height="118.434" rx="59.217" transform="matrix(0.866025 0.5 -0.866025 0.5 720 100)" fill="#0E131E" />
-  <rect width="118.434" height="118.434" rx="59.217" transform="matrix(0.866025 0.5 -0.866025 0.5 900 300)" fill="#0E131E" />
-  <rect width="118.434" height="118.434" rx="59.217" transform="matrix(0.866025 0.5 -0.866025 0.5 500 500)" fill="#0E131E" />
+<svg width="504" height="527" viewBox="0 0 504 527" fill="none" xmlns="http://www.w3.org/2000/svg">
+<foreignObject x="-47.1576" y="-23.1455" width="598.315" height="598.315"><div xmlns="http://www.w3.org/1999/xhtml" style="backdrop-filter:blur(43.07px);clip-path:url(#bgblur_0_0_25_clip_path);height:100%;width:100%"></div></foreignObject><g filter="url(#filter0_dd_0_25)" data-figma-bg-blur-radius="86.1338">
+<rect x="14.479" y="276.012" width="335.906" height="335.906" rx="59.217" transform="rotate(-45 14.479 276.012)" fill="#0E131E"/>
+</g>
+<defs>
+<filter id="filter0_dd_0_25" x="-47.1576" y="-23.1455" width="598.315" height="598.315" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="10.7667"/>
+<feGaussianBlur stdDeviation="13.4584"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_0_25"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="-24"/>
+<feGaussianBlur stdDeviation="19.5"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0.0139583 0 0 0 0 0.0176389 0 0 0 0 0.025 0 0 0 1 0"/>
+<feBlend mode="normal" in2="effect1_dropShadow_0_25" result="effect2_dropShadow_0_25"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect2_dropShadow_0_25" result="shape"/>
+</filter>
+<clipPath id="bgblur_0_0_25_clip_path" transform="translate(47.1576 23.1455)"><rect x="14.479" y="276.012" width="335.906" height="335.906" rx="59.217" transform="rotate(-45 14.479 276.012)"/>
+</clipPath></defs>
 </svg>

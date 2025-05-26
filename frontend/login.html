@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | ClipSummary</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/login.css">
+    <link rel="icon" type="image/svg+xml" href="images/favicons/favicon.svg">
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-box">
+            <h1 class="auth-title">Welcome Back</h1>
+            <div id="error-message" class="error-message"></div>
+            <div id="success-message" class="success-message"></div>
+            
+            <form id="login-form" class="auth-form">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                
+                <button type="submit" class="btn btn-primary btn-block login-btn">
+                    <span>Login</span>
+                    <i class="fas fa-sign-in-alt"></i>
+                </button>
+            </form>
+            
+            <div class="auth-footer">
+                <p>Don't have an account? <a href="signup.html">Sign Up</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('login-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new URLSearchParams();
+            formData.append('username', document.getElementById('username').value);
+            formData.append('password', document.getElementById('password').value);
+            
+            const errorEl = document.getElementById('error-message');
+            const successEl = document.getElementById('success-message');
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Store tokens
+                    localStorage.setItem('access_token', data.access_token);
+                    localStorage.setItem('token_type', data.token_type);
+                    
+                    // Fetch user info to get username and store it
+                    try {
+                        const userResponse = await fetch('/api/auth/me', {
+                            headers: {
+                                'Authorization': `${data.token_type} ${data.access_token}`
+                            }
+                        });
+                        
+                        if (userResponse.ok) {
+                            const userData = await userResponse.json();
+                            localStorage.setItem('username', userData.username);
+                            localStorage.setItem('user_id', userData.id);
+                        }
+                    } catch (error) {
+                        console.error('Error fetching user info:', error);
+                        // Don't fail login if we can't fetch user info
+                    }
+                    
+                    // Check if there's a redirect URL in the query params
+                    const params = new URLSearchParams(window.location.search);
+                    const redirect = params.get('redirect');
+                    
+                    // Redirect to the previous page or home
+                    window.location.href = redirect || '/';
+                } else {
+                    errorEl.textContent = data.detail || 'Login failed';
+                    errorEl.style.display = 'block';
+                    successEl.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                errorEl.textContent = 'An error occurred during login. Please try again.';
+                errorEl.style.display = 'block';
+                successEl.style.display = 'none';
+            }
+        });
+        
+        // Check for registration success message
+        window.addEventListener('load', function() {
+            const params = new URLSearchParams(window.location.search);
+            const registered = params.get('registered');
+            
+            if (registered) {
+                const successEl = document.getElementById('success-message');
+                successEl.textContent = 'Registration successful! Please login with your credentials.';
+                successEl.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

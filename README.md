@@ -1,67 +1,43 @@
 # ClipSummary
 
-A production-level application that allows users to summarize YouTube videos and local video files with multi-language subtitles.
+AI-powered video summarization tool that generates summaries and translations from YouTube videos and uploaded files.
 
 ## Features
 
-- **Search Videos**: Search by keyword or YouTube URL
-- **Upload Video**: Support for MP4/MKV/WebM files
-- **AI Summarization**: Using DistilBART/BART for English summaries
-- **Translation**: NLLB-200 for Korean/Chinese translations
-- **Speech-to-Text**: WhisperX for accurate word-level timestamps
-- **Export Summary**: PDF/text export options
-- **Synchronized UI**: Video player with synced subtitles in multiple languages
+- 🎥 **YouTube & File Upload** - Process videos from URLs or local files
+- 🤖 **AI Summarization** - Generate summaries using BART models
+- 🌐 **Multi-language Translation** - Support for Korean and Chinese
+- 📝 **Speech-to-Text** - Accurate transcription with WhisperX
+- ⏱️ **Synchronized Playback** - Video player with timestamped subtitles
 
-## Tech Stack
+## Quick Start
 
-### Frontend
-- React.js with Vite
-- Video.js for video playback
-- Tailwind CSS for styling
-
-### Backend
-- FastAPI (Python)
-- WhisperX for speech-to-text with timestamps
-- DistilBART/BART for summarization
-- NLLB-200 for translation
-- Redis for caching
-
-### Infrastructure
-- Docker for containerization
-- GitHub Actions for CI/CD
-- Azure Container Apps for hosting
-
-## Getting Started
-
-### Prerequisites
-- Docker and Docker Compose
-- Node.js (v16+)
-- Python (v3.9+)
-
-### Local Development
 ```bash
-# Clone the repository
+# Clone and start
 git clone <repository-url>
 cd clipSummary
-
-# Start the application using Docker Compose
 docker-compose up
 ```
 
-Visit `http://localhost:3000` to access the application.
+Visit `http://localhost` to use the application.
+
+## Tech Stack
+
+- **Frontend**: React.js, Tailwind CSS
+- **Backend**: FastAPI, WhisperX, BART, NLLB-200
+- **Storage**: Redis, PostgreSQL
+- **Infrastructure**: Docker, GitHub Actions
 
 ## Project Structure
+
 ```
 clipSummary/
 ├── frontend/           # React frontend
 ├── backend/            # FastAPI backend
-├── .github/workflows/  # CI/CD configuration
-├── docker-compose.yml  # Local development setup
-└── README.md           # Project documentation
+├── nginx/              # Reverse proxy
+└── docker-compose.yml  # Docker setup
 ```
 
-## Deployment
+## License
 
-The application is configured for deployment on Azure Container Apps using GitHub Actions for CI/CD.
-
-
+MIT License

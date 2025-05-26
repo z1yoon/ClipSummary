@@ -1,94 +1,386 @@
+import os
+from pathlib import Path
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import torch
-from typing import Dict, Optional
+import logging
+import time
+from typing import Dict, List, Tuple, Any, Union
+from utils.cache import update_processing_status
 
-# Cache the model and tokenizers to avoid reloading
-model = None
-tokenizer = None
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Map of language codes to NLLB language codes
-LANGUAGE_CODE_MAP = {
-    "en": "eng_Latn",
-    "ko": "kor_Latn",
-    "zh": "zho_Hans",
-    "fr": "fra_Latn",
-    "es": "spa_Latn",
-    "de": "deu_Latn",
-    "it": "ita_Latn",
-    "ja": "jpn_Jpan",
-    "ru": "rus_Cyrl",
-    "pt": "por_Latn",
-    "ar": "ara_Arab"
-    # Add more languages as needed
-}
+# Cache for loaded models
+model_cache: Dict[str, Tuple[Any, Any]] = {}
 
-def load_nllb_model():
-    """Load the NLLB-200 translation model if not already loaded"""
-    global model, tokenizer
+def get_models_path() -> Path:
+    """Get the path to the models directory."""
+    # In Docker, models are mounted at /app/models
+    # In development, they're in the project root/models
+    if os.path.exists("/app/models"):
+        return Path("/app/models")
+    else:
+        # Development path
+        project_root = Path(__file__).resolve().parent.parent.parent
+        return project_root / "models"
+
+def get_model_path(target_lang: str) -> str:
+    """Get the local path for the translation model."""
+    if target_lang not in ['zh', 'ko']:
+        raise ValueError(f"Unsupported language: {target_lang}. Only 'zh' (Chinese) and 'ko' (Korean) are supported.")
     
-    if model is None or tokenizer is None:
-        # We use the distilled 600M parameter model which is faster and more memory-efficient
-        model_name = "facebook/nllb-200-distilled-600M"
-        
-        # Check if CUDA is available
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Load model and tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
+    models_path = get_models_path()
+    # Use M2M100 model instead of NLLB for better language support
+    model_dir = models_path / "facebook--m2m100_418M"
     
-    return model, tokenizer
+    if not model_dir.exists():
+        raise FileNotFoundError(f"Model not found at {model_dir}. Please download the M2M100 model first.")
+    
+    return str(model_dir)
 
-def translate_text(text: str, source_lang: str = "en", target_lang: str = "ko") -> str:
-    """
-    Translate text using NLLB-200 model
+def load_translation_model(target_lang: str, upload_id: str = None) -> Tuple[Any, Any]:
+    """Load M2M100 translation model from local path with detailed logging."""
+    model_path = get_model_path(target_lang)
     
-    Args:
-        text: Text to translate
-        source_lang: Source language code (ISO 639-1)
-        target_lang: Target language code (ISO 639-1)
-        
-    Returns:
-        Translated text string
-    """
+    # Check cache first (use model_path as cache key)
+    if model_path in model_cache:
+        logger.info(f"[{upload_id}] Using cached M2M100 translation model for {target_lang}")
+        return model_cache[model_path]
+    
     try:
-        # Map language codes to NLLB format
-        source_nllb = LANGUAGE_CODE_MAP.get(source_lang, "eng_Latn")
-        target_nllb = LANGUAGE_CODE_MAP.get(target_lang, "eng_Latn")
+        start_time = time.time()
+        logger.info(f"[{upload_id}] Loading M2M100 translation model for {target_lang} from {model_path}")
         
-        # Return original text if source and target are the same
-        if source_lang == target_lang:
-            return text
+        # Log CUDA status
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"[{upload_id}] Using device: {device}")
+        if device == "cuda":
+            logger.info(f"[{upload_id}] CUDA Device: {torch.cuda.get_device_name(0)}")
+            logger.info(f"[{upload_id}] Available VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         
-        # Load model and tokenizer
-        model, tokenizer = load_nllb_model()
+        # Load M2M100 tokenizer and model from local path
+        tokenizer_start = time.time()
+        if os.path.exists(model_path):
+            tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+        else:
+            # Fallback to online model if local not available
+            logger.warning(f"[{upload_id}] Local model not found, downloading M2M100 model...")
+            tokenizer = AutoTokenizer.from_pretrained("facebook/m2m100_418M")
         
-        # Truncate text if it's too long
-        max_input_length = 512
-        if len(text.split()) > max_input_length:
-            text = ' '.join(text.split()[:max_input_length])
+        tokenizer_time = time.time() - tokenizer_start
+        logger.info(f"[{upload_id}] M2M100 Tokenizer loaded in {tokenizer_time:.2f} seconds")
         
-        # Tokenize input text
-        inputs = tokenizer(text, return_tensors="pt")
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        model_start = time.time()
+        if os.path.exists(model_path):
+            model = AutoModelForSeq2SeqLM.from_pretrained(model_path, local_files_only=True).to(device)
+        else:
+            # Fallback to online model if local not available
+            model = AutoModelForSeq2SeqLM.from_pretrained("facebook/m2m100_418M").to(device)
         
-        # Set the language token
-        inputs["forced_bos_token_id"] = tokenizer.lang_code_to_id[target_nllb]
+        model_time = time.time() - model_start
+        logger.info(f"[{upload_id}] M2M100 Model loaded in {model_time:.2f} seconds")
         
-        # Generate translation
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_length=512,
-                num_beams=5,
-                early_stopping=True
-            )
+        # Cache the loaded model
+        model_cache[model_path] = (model, tokenizer)
         
-        # Decode and return translation
-        translation = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        total_time = time.time() - start_time
+        logger.info(f"[{upload_id}] M2M100 translation model setup completed in {total_time:.2f} seconds")
         
-        return translation
+        return model, tokenizer
         
     except Exception as e:
-        print(f"Error in translation: {str(e)}")
-        return f"Translation failed: {str(e)}"
+        error_msg = f"Failed to load M2M100 translation model from {model_path}: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        raise RuntimeError(error_msg)
+
+def translate_text(text: str, target_lang: str, upload_id: str = None, 
+                  segment_index: int = None, total_segments: int = None) -> str:
+    """Translate text using M2M100 model with proper language forcing."""
+    try:
+        # Load model
+        model, tokenizer = load_translation_model(target_lang, upload_id)
+        
+        # Only log every 10th segment or for summary
+        should_log = (segment_index is None or 
+                     total_segments is None or 
+                     segment_index % 10 == 0 or 
+                     segment_index == 1 or 
+                     segment_index == total_segments)
+        
+        if should_log:
+            logger.info(f"[{upload_id}] Translating to {target_lang} - segment {segment_index}/{total_segments}")
+        
+        if segment_index is not None and total_segments is not None and upload_id:
+            progress = 50 + ((segment_index / total_segments) * 40)
+            # Only update status every 10 segments to reduce backend load
+            if segment_index % 10 == 0:
+                update_processing_status(
+                    upload_id=upload_id,
+                    status="processing",
+                    progress=progress,
+                    message=f"Translating to {target_lang} ({segment_index}/{total_segments})"
+                )
+        
+        # Set source language to English for M2M100
+        tokenizer.src_lang = "en"
+        
+        # Encode the input text
+        encoded = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        
+        # Move to device
+        device = next(model.parameters()).device
+        input_ids = encoded["input_ids"].to(device)
+        attention_mask = encoded["attention_mask"].to(device)
+        
+        # Generate translation using M2M100's get_lang_id method
+        with torch.no_grad():
+            generated_tokens = model.generate(
+                input_ids,
+                attention_mask=attention_mask,
+                forced_bos_token_id=tokenizer.get_lang_id(target_lang),
+                max_length=512,
+                num_beams=4,
+                length_penalty=0.6,
+                early_stopping=True,
+                do_sample=False
+            )
+        
+        # Decode the translation
+        translated_text = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
+        
+        # Log a sample translation for debugging
+        if should_log and upload_id:
+            logger.info(f"[{upload_id}] Translation sample: '{text[:50]}...' -> '{translated_text[:50]}...'")
+        
+        return translated_text
+        
+    except Exception as e:
+        error_msg = f"Translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="error",
+                progress=0,
+                message=error_msg
+            )
+        raise RuntimeError(error_msg)
+
+def batch_translate(texts: List[str], target_lang: str, upload_id: str = None) -> List[str]:
+    """Batch translate multiple texts with progress tracking."""
+    try:
+        total_texts = len(texts)
+        logger.info(f"[{upload_id}] Starting batch translation of {total_texts} texts to {target_lang}")
+        start_time = time.time()
+        
+        translated_texts = []
+        for i, text in enumerate(texts, 1):
+            translated = translate_text(
+                text, 
+                target_lang, 
+                upload_id=upload_id,
+                segment_index=i,
+                total_segments=total_texts
+            )
+            translated_texts.append(translated)
+            
+            if i % 10 == 0:
+                logger.info(f"[{upload_id}] Translated {i}/{total_texts} segments")
+        
+        total_time = time.time() - start_time
+        avg_time = total_time / total_texts
+        logger.info(f"[{upload_id}] Batch translation completed:")
+        logger.info(f"[{upload_id}] - Total time: {total_time:.2f} seconds")
+        logger.info(f"[{upload_id}] - Average time per text: {avg_time:.2f} seconds")
+        
+        return translated_texts
+        
+    except Exception as e:
+        error_msg = f"Batch translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="error",
+                progress=0,
+                message=error_msg
+            )
+        raise RuntimeError(error_msg)
+
+def translate_summary(summary_text: str, target_lang: str, upload_id: str = None) -> str:
+    """Translate summary text to target language."""
+    try:
+        logger.info(f"[{upload_id}] Translating summary to {target_lang}")
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=60,
+                message=f"Translating summary to {target_lang}..."
+            )
+        
+        translated_summary = translate_text(summary_text, target_lang, upload_id)
+        
+        logger.info(f"[{upload_id}] Summary translation completed")
+        return translated_summary
+        
+    except Exception as e:
+        error_msg = f"Summary translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        return summary_text  # Return original if translation fails
+
+def translate_subtitle_segments(segments: List[dict], target_lang: str, upload_id: str = None) -> List[dict]:
+    """Translate subtitle segments to target language."""
+    try:
+        logger.info(f"[{upload_id}] Translating {len(segments)} subtitle segments to {target_lang}")
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=70,
+                message=f"Translating subtitles to {target_lang}..."
+            )
+        
+        # Extract texts for batch translation
+        texts = [segment.get('text', '') for segment in segments]
+        
+        # Batch translate
+        translated_texts = batch_translate(texts, target_lang, upload_id)
+        
+        # Create new segments with translated text
+        translated_segments = []
+        for i, segment in enumerate(segments):
+            translated_segment = segment.copy()
+            translated_segment['text'] = translated_texts[i]
+            translated_segments.append(translated_segment)
+        
+        logger.info(f"[{upload_id}] Subtitle translation completed")
+        return translated_segments
+        
+    except Exception as e:
+        error_msg = f"Subtitle translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        return segments  # Return original if translation fails
+
+def get_supported_languages() -> Dict[str, str]:
+    """Get list of supported translation languages."""
+    return {
+        'zh': 'Chinese',
+        'ko': 'Korean'
+    }
+
+def translate_video_content_unified(summary_text: str, segments: List[dict], target_lang: str, upload_id: str = None) -> dict:
+    """Translate both summary and transcript segments together with unified progress tracking."""
+    try:
+        logger.info(f"[{upload_id}] Starting unified translation to {target_lang}")
+        logger.info(f"[{upload_id}] - Summary length: {len(summary_text)} characters")
+        logger.info(f"[{upload_id}] - Transcript segments: {len(segments)}")
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=60,
+                message=f"Translating content to {target_lang}..."
+            )
+        
+        # Step 1: Translate summary first (20% of translation progress)
+        logger.info(f"[{upload_id}] Translating summary...")
+        translated_summary = translate_text(summary_text, target_lang, upload_id)
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=70,
+                message=f"Summary translated to {target_lang}. Translating transcript..."
+            )
+        
+        # Step 2: Translate transcript segments (80% of translation progress)
+        logger.info(f"[{upload_id}] Translating {len(segments)} transcript segments...")
+        
+        # Extract texts for batch translation
+        texts = [segment.get('text', '') for segment in segments]
+        
+        # Batch translate with progress tracking
+        translated_texts = []
+        batch_size = 10  # Process in batches for better progress tracking
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        
+        for batch_idx in range(total_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, len(texts))
+            batch_texts = texts[start_idx:end_idx]
+            
+            # Translate batch
+            batch_translated = []
+            for i, text in enumerate(batch_texts):
+                segment_idx = start_idx + i + 1
+                translated = translate_text(
+                    text, 
+                    target_lang, 
+                    upload_id=upload_id,
+                    segment_index=segment_idx,
+                    total_segments=len(texts)
+                )
+                batch_translated.append(translated)
+            
+            translated_texts.extend(batch_translated)
+            
+            # Update progress
+            if upload_id:
+                progress = 70 + ((batch_idx + 1) / total_batches) * 25
+                update_processing_status(
+                    upload_id=upload_id,
+                    status="processing",
+                    progress=progress,
+                    message=f"Translating transcript to {target_lang} ({end_idx}/{len(texts)} segments)..."
+                )
+        
+        # Create translated segments
+        translated_segments = []
+        for i, segment in enumerate(segments):
+            translated_segment = segment.copy()
+            translated_segment['text'] = translated_texts[i]
+            translated_segments.append(translated_segment)
+        
+        # Create unified result
+        result = {
+            "summary": translated_summary,
+            "transcript": translated_segments,
+            "language": target_lang,
+            "translation_stats": {
+                "summary_length": len(translated_summary),
+                "transcript_segments": len(translated_segments),
+                "total_transcript_chars": sum(len(seg['text']) for seg in translated_segments)
+            }
+        }
+        
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="processing",
+                progress=95,
+                message=f"Translation to {target_lang} completed successfully!"
+            )
+        
+        logger.info(f"[{upload_id}] Unified translation completed:")
+        logger.info(f"[{upload_id}] - Summary: {len(translated_summary)} characters")
+        logger.info(f"[{upload_id}] - Transcript: {len(translated_segments)} segments")
+        
+        return result
+        
+    except Exception as e:
+        error_msg = f"Unified translation failed: {str(e)}"
+        logger.error(f"[{upload_id}] {error_msg}")
+        if upload_id:
+            update_processing_status(
+                upload_id=upload_id,
+                status="error",
+                progress=0,
+                message=error_msg
+            )
+        raise RuntimeError(error_msg)

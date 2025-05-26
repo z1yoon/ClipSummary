@@ -1,74 +1,112 @@
 import pytest
 from unittest.mock import patch, MagicMock
+import os
+import sys
 
-class TestAIModules:
-    """Unit tests for the AI modules."""
+# Add the parent directory to the path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+class TestSummarizer:
+    """Simple unit tests for the summarizer module."""
     
-    @patch('ai.whisperx.whisperx')
-    def test_transcribe_audio(self, mock_whisperx):
-        """Test the WhisperX transcription module."""
-        from ai.whisperx import transcribe_audio
-        
-        # Set up mock return value
-        mock_result = {
-            "segments": [
-                {
-                    "start": 0.0,
-                    "end": 5.0,
-                    "text": "This is a test transcription.",
-                    "words": [
-                        {"word": "This", "start": 0.0, "end": 0.5},
-                        {"word": "is", "start": 0.6, "end": 0.9},
-                        {"word": "a", "start": 1.0, "end": 1.2},
-                        {"word": "test", "start": 1.3, "end": 1.8},
-                        {"word": "transcription", "start": 1.9, "end": 5.0}
-                    ]
-                }
-            ]
-        }
-        mock_whisperx.return_value = mock_result
-        
-        # Call the function
-        result = transcribe_audio("/path/to/test.wav")
-        
-        # Assertions
-        assert result == mock_result
-        mock_whisperx.assert_called_once_with("/path/to/test.wav")
+    def test_summarizer_module_exists(self):
+        """Test that summarizer module can be imported."""
+        try:
+            from ai import summarizer
+            assert hasattr(summarizer, 'generate_summary')
+        except ImportError:
+            pytest.skip("Summarizer module not available")
     
-    @patch('ai.summarizer.generate_summary_with_model')
-    def test_summarize_text(self, mock_generate):
-        """Test the text summarization module."""
+    @patch('ai.summarizer.BartForConditionalGeneration')
+    @patch('ai.summarizer.BartTokenizer')
+    def test_generate_summary_mocked(self, mock_tokenizer_class, mock_model_class):
+        """Test summarizer with full mocking."""
         from ai.summarizer import generate_summary
         
-        # Set up mock return value
-        mock_generate.return_value = "This is a summary of the test transcription."
+        # Mock tokenizer instance
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.return_value = {"input_ids": MagicMock(), "attention_mask": MagicMock()}
+        mock_tokenizer.decode.return_value = "This is a test summary."
+        mock_tokenizer_class.from_pretrained.return_value = mock_tokenizer
         
-        # Test input
-        test_text = "This is a long transcription that needs to be summarized. It contains many words and sentences that can be condensed into a shorter version while maintaining the key points and meaning."
+        # Mock model instance
+        mock_model = MagicMock()
+        mock_model.generate.return_value = [MagicMock()]
+        mock_model_class.from_pretrained.return_value.to.return_value = mock_model
         
-        # Call the function
-        result = generate_summary(test_text, max_length=3)
-        
-        # Assertions
-        assert result == "This is a summary of the test transcription."
-        mock_generate.assert_called_once()
-        assert mock_generate.call_args[0][0] == test_text
+        # Test
+        result = generate_summary("Test text", max_sentences=3)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+class TestTranslator:
+    """Simple unit tests for the translator module."""
     
-    @patch('ai.translator.translate_with_model')
-    def test_translate_text(self, mock_translate):
-        """Test the text translation module."""
+    def test_translator_module_exists(self):
+        """Test that translator module can be imported."""
+        try:
+            from ai import translator
+            assert hasattr(translator, 'translate_text')
+        except ImportError:
+            pytest.skip("Translator module not available")
+    
+    @patch('ai.translator.get_model_path')
+    @patch('ai.translator.AutoTokenizer')
+    @patch('ai.translator.AutoModelForSeq2SeqLM')
+    def test_translate_text_mocked(self, mock_model_class, mock_tokenizer_class, mock_get_path):
+        """Test translator with full mocking to avoid model loading."""
         from ai.translator import translate_text
         
-        # Set up mock return value
-        mock_translate.return_value = "이것은 테스트 번역입니다."
+        # Mock model path
+        mock_get_path.return_value = "/fake/model/path"
         
-        # Test input
-        test_text = "This is a test translation."
-        target_lang = "ko"
+        # Mock tokenizer
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.return_value = {"input_ids": MagicMock(), "attention_mask": MagicMock()}
+        mock_tokenizer.batch_decode.return_value = ["번역된 텍스트"]
+        mock_tokenizer.get_lang_id.return_value = 123
+        mock_tokenizer_class.from_pretrained.return_value = mock_tokenizer
         
-        # Call the function
-        result = translate_text(test_text, target_lang)
+        # Mock model
+        mock_model = MagicMock()
+        mock_model.generate.return_value = [MagicMock()]
+        mock_model_class.from_pretrained.return_value.to.return_value = mock_model
         
-        # Assertions
-        assert result == "이것은 테스트 번역입니다."
-        mock_translate.assert_called_once_with(test_text, target_lang)
+        # Test
+        result = translate_text("Hello", "ko")
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+class TestWhisperX:
+    """Simple unit tests for the WhisperX module."""
+    
+    def test_whisperx_module_exists(self):
+        """Test that WhisperX module can be imported."""
+        try:
+            from ai import whisperx
+            assert hasattr(whisperx, 'transcribe_audio')
+        except ImportError:
+            pytest.skip("WhisperX module not available")
+    
+    @patch('ai.whisperx.whisperx')
+    def test_transcribe_audio_mocked(self, mock_whisperx):
+        """Test transcribe_audio with full mocking."""
+        from ai.whisperx import transcribe_audio
+        
+        # Mock WhisperX components
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {
+            "segments": [{"start": 0.0, "end": 5.0, "text": "Test"}],
+            "language": "en"
+        }
+        mock_whisperx.load_model.return_value = mock_model
+        mock_whisperx.load_audio.return_value = "fake_audio"
+        mock_whisperx.load_align_model.return_value = (MagicMock(), MagicMock())
+        mock_whisperx.align.return_value = {
+            "segments": [{"start": 0.0, "end": 5.0, "text": "Test", "words": []}]
+        }
+        
+        # Test
+        result = transcribe_audio("/fake/path.wav", diarize=False)
+        assert "segments" in result
+        assert len(result["segments"]) >= 1

@@ -3,34 +3,52 @@ fastapi==0.104.0
 uvicorn==0.23.2
 python-multipart==0.0.6
 pydantic==2.4.2
-python-jose==3.3.0
-python-dotenv==1.0.0
+email-validator==2.1.0
 httpx==0.25.0
+python-dotenv==1.0.0
+aiofiles==23.2.0
+
+# Model downloading
+huggingface_hub>=0.19.0
+
+# Authentication and security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+bcrypt==3.2.2
 
 # Database and caching
 redis==5.0.1
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+alembic==1.13.1
 
 # Media processing
 ffmpeg-python==0.2.0
-yt-dlp==2023.10.13
+yt-dlp>=2023.12.30
 
-# ML libraries - updated versions to be compatible with whisperX
-torch>=2.5.1
+# Scientific computing dependencies - Updated for WhisperX 3.3.4 compatibility
+numpy>=2.0.2
+matplotlib>=3.5.0
+scipy>=1.9.0
+scikit-learn>=1.1.0
+
+# AI and ML dependencies - Fixed for RTX 5090 + WhisperX 3.3.4 compatibility
+whisperx==3.3.4
+ctranslate2<4.5.0
+faster-whisper>=1.1.1
+nltk>=3.9.1
+onnxruntime-gpu>=1.19.0
+pandas>=2.0.0
+pyannote-audio>=3.3.2
+torch>=2.7.0
+torchaudio>=2.7.0
 transformers>=4.48.0
-sentencepiece==0.1.99
-accelerate==0.23.0
 
-# Google API
-google-api-python-client==2.108.0
-pytube==15.0.0
+# Additional ML dependencies for compatibility
+accelerate>=0.25.0
+librosa>=0.10.0
+soundfile>=0.12.1
+speechbrain>=0.5.16
 
-# PyTZ explicitly for pandas dependency
-pytz>=2020.1
-
-# Testing
-pytest==7.4.3
-pytest-cov==4.1.0
-pytest-html==3.2.0
-
-# Install WhisperX last to avoid dependency conflicts
-git+https://github.com/m-bain/whisperX.git
+# PyTorch Lightning - compatible with torch 2.7.0
+pytorch-lightning>=2.1.0

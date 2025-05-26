@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Player - ClipSummary</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/video-page.css">
+    <link rel="icon" type="image/svg+xml" href="images/favicons/favicon.svg">
+</head>
+<body>
+    <!-- Background elements -->
+    <div class="background">
+        <div class="swirl"></div>
+        <div class="cubes"></div>
+        <div class="gradient-overlay"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <div class="logo">
+                <h1>ClipSummary</h1>
+            </div>
+            <div class="nav-buttons">
+                <a href="/profile.html" class="btn btn-outline">
+                    <i class="fas fa-video"></i>
+                    My Videos
+                </a>
+            </div>
+        </header>
+        
+        <div class="video-container">
+            <div class="video-player-wrapper">
+                <div class="video-player">
+                    <video id="video-player" controls controlsList="nodownload">
+                        <source id="video-source" src="" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="subtitle-display" id="subtitle-display"></div>
+                    
+                    <div class="processing-overlay" id="processing-overlay">
+                        <div class="processing-spinner"></div>
+                        <div class="processing-text">
+                            <p>Processing your video...</p>
+                            <p id="processing-status">Analyzing audio and generating transcript</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="video-controls">
+                <div class="language-selector">
+                    <div class="language-dropdown">
+                        <button class="language-dropdown-btn" id="language-dropdown-btn">
+                            <span class="language-flag" id="current-language-flag">🇺🇸</span>
+                            <span class="language-name" id="current-language-name">English</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                        <div class="language-dropdown-menu" id="language-dropdown-menu">
+                            <!-- Languages will be populated dynamically -->
+                        </div>
+                    </div>
+                    
+                    <label class="toggle-label">
+                        <span>Subtitles</span>
+                        <span class="toggle-switch">
+                            <input type="checkbox" id="subtitle-toggle" checked>
+                            <span class="slider"></span>
+                        </span>
+                    </label>
+                </div>
+                
+                <div class="action-buttons">
+                    <button id="translate-btn" class="btn btn-outline" style="display: none;">
+                        <i class="fas fa-language"></i> Translate
+                    </button>
+                    <button id="copy-link" class="btn btn-outline">
+                        <i class="fas fa-copy"></i> Copy Link
+                    </button>
+                    <button id="download-btn" class="btn btn-primary">
+                        <i class="fas fa-download"></i> Download
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="content-box summary-box">
+            <div class="content-header">
+                <h2 class="content-title">Summary</h2>
+            </div>
+            <div class="content-text" id="summary-content">
+                <div class="processing-notice" id="summary-processing">
+                    <i class="fas fa-spinner fa-spin"></i> Your summary is being generated...
+                </div>
+            </div>
+        </div>
+        
+        <div class="content-box transcript-box">
+            <div class="content-header">
+                <h2 class="content-title">Transcript</h2>
+                <div class="transcript-actions">
+                    <button id="download-transcript-btn" class="btn btn-outline btn-small">
+                        <i class="fas fa-download"></i> Download Transcript
+                    </button>
+                </div>
+            </div>
+            <div class="transcript-container">
+                <div class="transcript-content" id="transcript-content">
+                    <div class="loading-transcript" id="transcript-loading">
+                        <i class="fas fa-spinner fa-spin"></i> Loading transcript...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get video ID from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const videoId = urlParams.get('id');
+            
+            if (!videoId) {
+                alert('No video ID provided');
+                window.location.href = '/';
+                return;
+            }
+            
+            // Check if user is authenticated
+            const token = localStorage.getItem('access_token');
+            const tokenType = localStorage.getItem('token_type');
+            
+            if (!token) {
+                window.location.href = '/login.html?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+                return;
+            }
+            
+            // Function to make authenticated API requests
+            async function fetchWithAuth(url, options = {}) {
+                options.headers = options.headers || {};
+                options.headers['Authorization'] = `${tokenType} ${token}`;
+                return fetch(url, options);
+            }
+            
+            // Variables to store video data
+            let videoData = null;
+            let subtitles = {};
+            let currentSubtitleLanguage = 'en';
+            let subtitleSegments = [];
+            
+            // Enhanced language mapping with flags for Chinese and Korean
+            const LANGUAGE_DATA = {
+                'en': { name: 'English', flag: '🇺🇸' },
+                'zh': { name: 'Chinese', flag: '🇨🇳' },
+                'ko': { name: 'Korean', flag: '🇰🇷' }
+            };
+
+            // Elements
+            const videoPlayer = document.getElementById('video-player');
+            const videoSource = document.getElementById('video-source');
+            const subtitleDisplay = document.getElementById('subtitle-display');
+            const subtitleToggle = document.getElementById('subtitle-toggle');
+            const processingOverlay = document.getElementById('processing-overlay');
+            const processingStatus = document.getElementById('processing-status');
+            const summaryContent = document.getElementById('summary-content');
+            const summaryProcessing = document.getElementById('summary-processing');
+            const transcriptContent = document.getElementById('transcript-content');
+            const transcriptLoading = document.getElementById('transcript-loading');
+            const copyLinkBtn = document.getElementById('copy-link');
+            const downloadBtn = document.getElementById('download-btn');
+            const languageDropdownBtn = document.getElementById('language-dropdown-btn');
+            const languageDropdownMenu = document.getElementById('language-dropdown-menu');
+
+            // Language dropdown functionality
+            languageDropdownBtn.addEventListener('click', () => {
+                languageDropdownMenu.classList.toggle('show');
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!languageDropdownBtn.contains(e.target)) {
+                    languageDropdownMenu.classList.remove('show');
+                }
+            });
+
+            // Show notification function
+            function showNotification(message, type = 'info') {
+                const notification = document.createElement('div');
+                notification.className = `notification notification-${type}`;
+                notification.innerHTML = `
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+                    <span>${message}</span>
+                `;
+                
+                document.body.appendChild(notification);
+                
+                // Animate in
+                setTimeout(() => notification.classList.add('show'), 10);
+                
+                // Remove after 3 seconds
+                setTimeout(() => {
+                    notification.classList.remove('show');
+                    setTimeout(() => document.body.removeChild(notification), 300);
+                }, 3000);
+            }
+            
+            // Load video data
+            async function loadVideoData() {
+                try {
+                    const response = await fetchWithAuth(`/api/videos/${videoId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to load video data');
+                    }
+                    
+                    videoData = await response.json();
+                    
+                    // Update video player
+                    document.title = `${videoData.title} - ClipSummary`;
+                    
+                    // Handle different video types
+                    if (videoData.video_url) {
+                        // Regular uploaded video
+                        videoSource.src = videoData.video_url;
+                        videoPlayer.load();
+                        processingOverlay.style.display = 'none';
+                    } else if (videoData.url && videoData.url.includes('youtube')) {
+                        // YouTube video - show processing overlay until complete
+                        if (videoData.status === 'completed') {
+                            // YouTube processing is done, but we can't show the video directly
+                            // Instead, show thumbnail and indicate it's a YouTube video
+                            processingOverlay.innerHTML = `
+                                <div class="youtube-placeholder">
+                                    <img src="${videoData.thumbnail || '/images/favicons/favicon.svg'}" alt="Video thumbnail" style="max-width: 300px; border-radius: 8px;">
+                                    <h3 style="margin: 16px 0; color: white;">${videoData.title}</h3>
+                                    <p style="color: #888;">YouTube video processed successfully</p>
+                                    <a href="${videoData.url}" target="_blank" class="btn btn-primary" style="margin-top: 16px;">
+                                        <i class="fas fa-external-link-alt"></i> Watch on YouTube
+                                    </a>
+                                </div>
+                            `;
+                            processingOverlay.style.display = 'flex';
+                        } else {
+                            // Still processing
+                            checkProcessingStatus();
+                        }
+                    } else {
+                        // Unknown video type or still processing
+                        checkProcessingStatus();
+                    }
+                    
+                    // Load available languages
+                    if (videoData.available_languages && videoData.available_languages.length > 0) {
+                        populateLanguageDropdown(videoData.available_languages);
+                        loadSubtitles(currentSubtitleLanguage);
+                    }
+                    
+                    // Load summary if available
+                    if (videoData.summary) {
+                        summaryProcessing.style.display = 'none';
+                        summaryContent.innerHTML = `<p>${videoData.summary}</p>`;
+                        
+                        // Show translate button for English videos
+                        if (currentSubtitleLanguage === 'en') {
+                            document.getElementById('translate-btn').style.display = 'inline-block';
+                        }
+                    } else {
+                        checkProcessingStatus();
+                    }
+                    
+                } catch (error) {
+                    console.error('Error loading video:', error);
+                    processingOverlay.innerHTML = `
+                        <div class="error-message">
+                            <i class="fas fa-exclamation-triangle" style="font-size: 48px; color: #ef4444; margin-bottom: 16px;"></i>
+                            <h3 style="color: white; margin-bottom: 8px;">Failed to load video</h3>
+                            <p style="color: #888;">Please try refreshing the page or contact support if the problem persists.</p>
+                            <button onclick="window.location.reload()" class="btn btn-primary" style="margin-top: 16px;">
+                                <i class="fas fa-refresh"></i> Retry
+                            </button>
+                        </div>
+                    `;
+                    processingOverlay.style.display = 'flex';
+                }
+            }
+            
+            // Populate language dropdown
+            function populateLanguageDropdown(languages) {
+                const languageDropdownMenu = document.getElementById('language-dropdown-menu');
+                languageDropdownMenu.innerHTML = '';
+                
+                languages.forEach(lang => {
+                    const option = document.createElement('div');
+                    option.className = 'language-option';
+                    option.setAttribute('data-lang', lang);
+                    
+                    option.innerHTML = `
+                        <span class="language-flag">${LANGUAGE_DATA[lang].flag}</span>
+                        <span class="language-name">${LANGUAGE_DATA[lang].name}</span>
+                    `;
+                    
+                    option.addEventListener('click', () => {
+                        currentSubtitleLanguage = lang;
+                        loadSubtitles(currentSubtitleLanguage);
+                        updateCurrentLanguageDisplay();
+                    });
+                    
+                    languageDropdownMenu.appendChild(option);
+                });
+            }
+            
+            // Update displayed language in the dropdown
+            function updateCurrentLanguageDisplay() {
+                const currentLanguageFlag = document.getElementById('current-language-flag');
+                const currentLanguageName = document.getElementById('current-language-name');
+                
+                currentLanguageFlag.textContent = LANGUAGE_DATA[currentSubtitleLanguage]?.flag || '';
+                currentLanguageName.textContent = LANGUAGE_DATA[currentSubtitleLanguage]?.name || currentSubtitleLanguage;
+            }
+            
+            // Load subtitles for selected language and update summary
+            async function loadSubtitles(language) {
+                try {
+                    if (subtitles[language]) {
+                        // Already loaded
+                        subtitleSegments = subtitles[language].segments;
+                        await loadSummary(language); // Load summary for this language
+                        return;
+                    }
+                    
+                    transcriptLoading.style.display = 'block';
+                    transcriptContent.innerHTML = '';
+                    
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/subtitles/${language}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to load subtitles for ${language}`);
+                    }
+                    
+                    const data = await response.json();
+                    subtitles[language] = data;
+                    subtitleSegments = data.segments;
+                    
+                    // Render transcript
+                    renderTranscript(subtitleSegments);
+                    
+                    // Load summary for this language
+                    await loadSummary(language);
+                    
+                } catch (error) {
+                    console.error('Error loading subtitles:', error);
+                    transcriptContent.innerHTML = `<p>Failed to load subtitles for this language.</p>`;
+                }
+            }
+            
+            // Render transcript
+            function renderTranscript(segments) {
+                transcriptLoading.style.display = 'none';
+                
+                if (!segments || segments.length === 0) {
+                    transcriptContent.innerHTML = '<p>No transcript available for this video.</p>';
+                    return;
+                }
+                
+                let transcriptHtml = '';
+                
+                segments.forEach((segment, index) => {
+                    const startTime = formatTime(segment.start);
+                    const text = segment.text;
+                    
+                    transcriptHtml += `
+                        <div class="transcript-segment" data-start="${segment.start}" data-end="${segment.end}">
+                            <span class="transcript-timestamp">${startTime}</span>
+                            <span class="transcript-text">${text}</span>
+                        </div>
+                    `;
+                });
+                
+                transcriptContent.innerHTML = transcriptHtml;
+                
+                // Add click event to transcript segments
+                const transcriptSegments = document.querySelectorAll('.transcript-segment');
+                transcriptSegments.forEach(segment => {
+                    segment.addEventListener('click', () => {
+                        const startTime = parseFloat(segment.dataset.start);
+                        videoPlayer.currentTime = startTime;
+                        videoPlayer.play();
+                    });
+                });
+            }
+            
+            // Format time for display
+            function formatTime(timeInSeconds) {
+                const minutes = Math.floor(timeInSeconds / 60);
+                const seconds = Math.floor(timeInSeconds % 60);
+                return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+            
+            // Check processing status for videos still being processed
+            async function checkProcessingStatus() {
+                if (videoData.status === 'processing') {
+                    processingOverlay.style.display = 'flex';
+                    
+                    try {
+                        const response = await fetchWithAuth(`/api/upload/status/${videoId}`);
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            processingStatus.textContent = data.message || 'Processing your video...';
+                            
+                            if (data.status === 'completed') {
+                                // Refresh the page to show completed video
+                                window.location.reload();
+                                return;
+                            }
+                        }
+                        
+                        // Check again in 5 seconds
+                        setTimeout(checkProcessingStatus, 5000);
+                        
+                    } catch (error) {
+                        console.error('Error checking processing status:', error);
+                        setTimeout(checkProcessingStatus, 5000);
+                    }
+                }
+            }
+            
+            // Update subtitles based on video playback position
+            function updateSubtitles() {
+                if (!subtitleToggle.checked || subtitleSegments.length === 0) {
+                    subtitleDisplay.textContent = '';
+                    return;
+                }
+                
+                const currentTime = videoPlayer.currentTime;
+                
+                // Find the current subtitle segment
+                const currentSegment = subtitleSegments.find(segment => 
+                    currentTime >= segment.start && currentTime <= segment.end
+                );
+                
+                if (currentSegment) {
+                    subtitleDisplay.textContent = currentSegment.text;
+                } else {
+                    subtitleDisplay.textContent = '';
+                }
+            }
+            
+            // Event Listeners
+            subtitleToggle.addEventListener('change', () => {
+                subtitleDisplay.style.visibility = subtitleToggle.checked ? 'visible' : 'hidden';
+            });
+            
+            videoPlayer.addEventListener('timeupdate', updateSubtitles);
+            
+            copyLinkBtn.addEventListener('click', () => {
+                const url = window.location.href;
+                navigator.clipboard.writeText(url);
+                alert('Link copied to clipboard');
+            });
+            
+            downloadBtn.addEventListener('click', () => {
+                if (videoData && videoData.video_url) {
+                    const a = document.createElement('a');
+                    a.href = videoData.video_url;
+                    a.download = videoData.title || 'video';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                } else {
+                    alert('Video is not available for download');
+                }
+            });
+            
+            // Download transcript button
+            document.getElementById('download-transcript-btn').addEventListener('click', () => {
+                if (!subtitleSegments || subtitleSegments.length === 0) {
+                    showNotification('No transcript available for download', 'error');
+                    return;
+                }
+                
+                // Generate transcript content
+                let transcriptText = `Transcript - ${videoData.title}\n`;
+                transcriptText += `Language: ${LANGUAGE_DATA[currentSubtitleLanguage]?.name || currentSubtitleLanguage}\n`;
+                transcriptText += `Generated: ${new Date().toLocaleDateString()}\n\n`;
+                
+                subtitleSegments.forEach(segment => {
+                    const startTime = formatTime(segment.start);
+                    const endTime = formatTime(segment.end);
+                    transcriptText += `[${startTime} - ${endTime}] ${segment.text}\n`;
+                });
+                
+                // Create and download file
+                const blob = new Blob([transcriptText], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `transcript_${videoData.title || videoId}_${currentSubtitleLanguage}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showNotification('Transcript downloaded successfully!', 'success');
+            });
+            
+            // Translation functionality
+            document.getElementById('translate-btn').addEventListener('click', () => {
+                showTranslateModal();
+            });
+            
+            // Show translation modal
+            function showTranslateModal() {
+                const modal = document.createElement('div');
+                modal.className = 'translate-modal-overlay';
+                modal.innerHTML = `
+                    <div class="translate-modal">
+                        <div class="modal-header">
+                            <h3>Translate Content</h3>
+                            <button class="modal-close" onclick="this.parentElement.parentElement.parentElement.remove()">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <p>Select language for translation:</p>
+                            <div class="language-selection">
+                                <button class="language-btn" data-lang="en">
+                                    <span class="language-flag">🇺🇸</span>
+                                    <span class="language-name">English</span>
+                                </button>
+                                <button class="language-btn" data-lang="zh">
+                                    <span class="language-flag">🇨🇳</span>
+                                    <span class="language-name">Chinese</span>
+                                </button>
+                                <button class="language-btn" data-lang="ko">
+                                    <span class="language-flag">🇰🇷</span>
+                                    <span class="language-name">Korean</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                document.body.appendChild(modal);
+                
+                // Add event listeners to language buttons
+                modal.querySelectorAll('.language-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const targetLang = btn.dataset.lang;
+                        await translateVideo(targetLang);
+                        modal.remove();
+                    });
+                });
+            }
+            
+            // Translate video content
+            async function translateVideo(targetLanguage) {
+                try {
+                    showNotification('Starting translation...', 'info');
+                    
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/translate?target_language=${targetLanguage}`, {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Translation failed');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.status === 'already_exists') {
+                        showNotification(`Translation to ${result.language_name || targetLanguage} already exists`, 'info');
+                    } else {
+                        showNotification(`Successfully translated to ${result.language_name || targetLanguage}!`, 'success');
+                    }
+                    
+                    // Reload video data to update available languages and other information
+                    await loadVideoData();
+                    
+                    // Add new language to dropdown if not already there
+                    if (!videoData.available_languages.includes(targetLanguage)) {
+                        videoData.available_languages.push(targetLanguage);
+                        populateLanguageDropdown(videoData.available_languages);
+                    }
+                    
+                    // Switch to the newly translated language
+                    currentSubtitleLanguage = targetLanguage;
+                    updateCurrentLanguageDisplay();
+                    await loadSubtitles(targetLanguage);
+                    
+                } catch (error) {
+                    console.error('Translation error:', error);
+                    showNotification(`Translation failed: ${error.message}`, 'error');
+                }
+            }
+            
+            // Load summary for specific language
+            async function loadSummary(language) {
+                try {
+                    const response = await fetchWithAuth(`/api/videos/${videoId}/summary/${language}`);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        summaryProcessing.style.display = 'none';
+                        summaryContent.innerHTML = `<p>${data.summary}</p>`;
+                    } else {
+                        // If translation doesn't exist, show original summary
+                        if (videoData.summary) {
+                            summaryContent.innerHTML = `<p>${videoData.summary}</p>`;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading summary:', error);
+                    // Fall back to original summary
+                    if (videoData.summary) {
+                        summaryContent.innerHTML = `<p>${videoData.summary}</p>`;
+                    }
+                }
+            }
+            
+            // Start loading
+            loadVideoData();
+        });
+    </script>
+</body>
+</html>

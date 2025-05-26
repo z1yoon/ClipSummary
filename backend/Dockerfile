@@ -1,39 +1,68 @@
-FROM python:3.9-slim
+# Use PyTorch 2.7.0 with CUDA 12.8 for RTX 5090 support (required)
+FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
 
-WORKDIR /app
-
-# Install system dependencies including FFmpeg
+# Install system dependencies and cuDNN compatibility libraries
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
+    wget \
     build-essential \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    libsndfile1 \
+    --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip and install setuptools
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Fix cuDNN library compatibility (cuDNN 8 to cuDNN 9 mapping)
+# Create proper symbolic links with absolute paths
+RUN mkdir -p /usr/local/cuda/lib64 && \
+    # Create symbolic links using absolute paths (not variables)
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9 /usr/local/cuda/lib64/libcudnn_ops_infer.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9 /usr/local/cuda/lib64/libcudnn_ops_train.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_adv.so.9 /usr/local/cuda/lib64/libcudnn_adv_infer.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_adv.so.9 /usr/local/cuda/lib64/libcudnn_adv_train.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_cnn.so.9 /usr/local/cuda/lib64/libcudnn_cnn_infer.so.8 && \
+    ln -sf /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_cnn.so.9 /usr/local/cuda/lib64/libcudnn_cnn_train.so.8 && \
+    # Verify the links were created correctly
+    echo "Checking cuDNN symbolic links:" && \
+    ls -la /usr/local/cuda/lib64/libcudnn* && \
+    echo "Verifying target files exist:" && \
+    ls -la /opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9
 
-# Copy requirements first for better caching
+WORKDIR /app
+
+# Set environment variables for GPU optimization
+ENV CUDA_VISIBLE_DEVICES=0
+ENV PYTHONUNBUFFERED=1
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+ENV HF_HOME=/app/.cache/huggingface
+ENV TRANSFORMERS_OFFLINE=0
+# Updated library paths - ensure both cuDNN 9 and compatibility links are found
+ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/cuda/lib64:/opt/conda/lib:$LD_LIBRARY_PATH
+
+
+# Copy requirements file
 COPY requirements.txt .
 
-# Install Python dependencies with specific install order and flags
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies with better error handling
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
-COPY . .
+# Copy application files
+COPY ./ai ./ai
+COPY ./api ./api
+COPY ./db ./db
+COPY ./schemas ./schemas
+COPY ./security ./security
+COPY ./utils ./utils
+COPY ./main.py ./
+COPY ./logging.conf ./
 
-# Create uploads directory
-RUN mkdir -p uploads
+# Create necessary directories with proper permissions
+RUN mkdir -p uploads cache .cache/huggingface/hub && \
+    chmod -R 777 uploads cache .cache && \
+    chown -R root:root uploads cache .cache
 
-# Set PYTHONPATH to ensure package imports work correctly
-ENV PYTHONPATH="${PYTHONPATH}:/app"
-
-# Create a non-root user and change ownership
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
-
-# Expose the port
-EXPOSE 8000
-
-# Command to run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.conf"]

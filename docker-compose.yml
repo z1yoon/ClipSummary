@@ -5,37 +5,70 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    restart: always
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"  # Add HTTPS port
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d
+      - ./uploads:/var/www/uploads:ro  # Serve uploads as static files (read-only)
+      - ./ssl:/etc/nginx/ssl:ro  # Mount SSL certificates
+    depends_on:
+      - frontend
+      - backend
+    restart: always
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./uploads:/app/uploads
+      - ./uploads:/app/uploads  # Bind mount for uploads
+      - ./models:/app/models  # Bind mount for models
     environment:
       - PYTHONUNBUFFERED=1
-      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
-      - REDIS_URL=redis://redis:6379/0
+      - TRANSFORMERS_CACHE=/app/models
+      - HF_HOME=/app/models
+      - CUDA_VISIBLE_DEVICES=0
+      - TORCH_USE_CUDA_DSA=1
     env_file:
       - .env
     depends_on:
       - redis
+      - postgres
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, compute, utility]
 
   redis:
     image: redis:alpine
-    ports:
-      - "6379:6379"
     volumes:
-      - redis-data:/data
+      - redis-data:/data  # Named volume is fine for Redis
+
+  postgres:
+    image: postgres:13
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # Named volume is fine for DB
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-clipsummary}
+      - POSTGRES_USER=${POSTGRES_USER:-clipsummary}
+      - POSTGRES_DB=${POSTGRES_DB:-clipsummary}
+    ports:
+      - "5432:5432"
+    restart: always
 
 volumes:
   redis-data:
-  uploads:
+  postgres-data:

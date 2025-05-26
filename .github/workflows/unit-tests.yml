@@ -1,0 +1,46 @@
+name: Unit Tests
+
+on:
+  pull_request:
+    branches: [ dev ]
+    types: [ opened, synchronize, reopened ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+      
+      - name: Install Python dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-mock
+          pip install -r requirements.txt
+      
+      - name: Run Python unit tests
+        working-directory: ./backend
+        env:
+          DATABASE_URL: sqlite:///./test.db
+          SECRET_KEY: test_secret_key
+          TEST_MODE: true
+        run: |
+          pytest tests/unit/ -v --tb=short
+      
+      - name: Check JavaScript syntax
+        run: |
+          cd frontend/js
+          for file in *.js; do
+            if [ -f "$file" ]; then
+              echo "Checking $file for syntax errors"
+              node --check "$file"
+            fi
+          done
