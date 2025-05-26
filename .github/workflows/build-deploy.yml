@@ -17,44 +17,105 @@ jobs:
         uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TAILSCALE_KEY }}
+          hostname: github-actions-${{ github.run_id }}
+      
+      - name: Debug Tailscale connection
+        run: |
+          echo "=== Tailscale Status ==="
+          tailscale status
+          echo ""
+          echo "=== Tailscale IP ==="
+          tailscale ip -4
+          echo ""
+          echo "=== Testing network connectivity ==="
+          ping -c 3 ${{ secrets.DEPLOY_HOST }} || echo "Ping failed"
+          echo ""
+          echo "=== Testing SSH port ==="
+          nc -zv ${{ secrets.DEPLOY_HOST }} 22 || echo "SSH port test failed"
       
       - name: SSH to server and deploy
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}  # This should be your server's Tailscale IP
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
         run: |
-          # Setup SSH key
+          echo "=== Setting up SSH ==="
+          
+          # Setup SSH key with proper formatting
           mkdir -p ~/.ssh
-          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 700 ~/.ssh
+          
+          # Handle SSH key - remove any carriage returns and ensure proper format
+          echo "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Add Tailscale IP to known hosts (bypass host key checking for Tailscale IPs)
-          echo "Host 100.*" >> ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-          echo "  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+          # Verify SSH key format
+          echo "=== SSH Key Info ==="
+          head -1 ~/.ssh/id_rsa
+          tail -1 ~/.ssh/id_rsa
           
-          # Test connection first
-          echo "Testing connection to $DEPLOY_HOST..."
-          ssh -i ~/.ssh/id_rsa -o ConnectTimeout=10 $DEPLOY_USER@$DEPLOY_HOST "echo 'Connection successful'"
+          # Create SSH config for Tailscale IPs
+          cat > ~/.ssh/config << 'SSHCONFIG'
+          Host 100.*
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            PasswordAuthentication no
+            PubkeyAuthentication yes
+            ConnectTimeout 30
+            ServerAliveInterval 60
+            ServerAliveCountMax 3
+          SSHCONFIG
           
+          chmod 600 ~/.ssh/config
+          
+          echo "=== Testing SSH connection with verbose output ==="
+          ssh -vvv -i ~/.ssh/id_rsa -o ConnectTimeout=30 $DEPLOY_USER@$DEPLOY_HOST "echo 'SSH connection successful'; whoami; pwd; uname -a" || {
+            echo "SSH connection failed. Checking common issues..."
+            echo "1. Verifying target host is reachable:"
+            ping -c 3 $DEPLOY_HOST || echo "Host unreachable"
+            echo "2. Checking SSH service:"
+            nc -zv $DEPLOY_HOST 22 || echo "SSH port not responding"
+            echo "3. SSH key fingerprint:"
+            ssh-keygen -lf ~/.ssh/id_rsa
+            exit 1
+          }
+          
+          echo "=== Starting deployment ==="
           # SSH to server and deploy via Tailscale
           ssh -i ~/.ssh/id_rsa $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
             set -e
+            echo "Connected successfully! Starting deployment..."
+            
+            # Show current environment
+            echo "Current user: $(whoami)"
+            echo "Current directory: $(pwd)"
+            echo "Home directory: $HOME"
             
             # Navigate to deployment directory
-            cd ${{ secrets.DEPLOY_DIR }}
+            echo "Navigating to deployment directory: ${{ secrets.DEPLOY_DIR }}"
+            cd "${{ secrets.DEPLOY_DIR }}" || {
+              echo "Error: Cannot access deployment directory ${{ secrets.DEPLOY_DIR }}"
+              echo "Available directories in current location:"
+              ls -la
+              exit 1
+            }
+            
+            echo "Current git status:"
+            git status || echo "Not a git repository or git not available"
             
             # Pull latest changes
+            echo "Fetching latest changes..."
             git fetch origin
             git checkout ${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
             # Stop existing containers
+            echo "Stopping existing containers..."
             docker-compose down || true
             
             # Build and deploy with docker-compose
+            echo "Building and starting containers..."
             docker-compose build --no-cache
             docker-compose up -d
             
@@ -63,6 +124,7 @@ jobs:
             sleep 30
             
             # Check if services are running
+            echo "=== Container Status ==="
             docker-compose ps
             
             # Show recent logs for debugging
