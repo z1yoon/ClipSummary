@@ -19,28 +19,28 @@ jobs:
           authkey: ${{ secrets.TAILSCALE_KEY }}
           hostname: github-actions-${{ github.run_id }}
       
-      - name: Debug Tailscale connection
+      - name: Debug network connectivity
         run: |
           echo "=== Tailscale Status ==="
           tailscale status
           echo ""
-          echo "=== Tailscale IP ==="
-          tailscale ip -4
+          echo "=== Testing connectivity to school network ==="
+          ping -c 3 10.241.150.21 || echo "Ping to school IP failed"
           echo ""
-          echo "=== Testing network connectivity ==="
-          ping -c 3 ${{ secrets.DEPLOY_HOST }} || echo "Ping failed"
+          echo "=== Testing SSH port on school network ==="
+          nc -zv 10.241.150.21 22 || echo "SSH port test failed on school IP"
           echo ""
-          echo "=== Testing SSH port ==="
-          nc -zv ${{ secrets.DEPLOY_HOST }} 22 || echo "SSH port test failed"
+          echo "=== Testing connectivity to Tailscale IP (for comparison) ==="
+          ping -c 3 ${{ secrets.DEPLOY_HOST }} || echo "Ping to Tailscale IP failed"
       
       - name: SSH to server and deploy
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_HOST: "10.241.150.21"  # Use school network IP directly
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
         run: |
-          echo "=== Setting up SSH ==="
+          echo "=== Setting up SSH for school network ==="
           
           # Setup SSH key with proper formatting
           mkdir -p ~/.ssh
@@ -55,9 +55,9 @@ jobs:
           head -1 ~/.ssh/id_rsa
           tail -1 ~/.ssh/id_rsa
           
-          # Create SSH config for Tailscale IPs
+          # Create SSH config for school network
           cat > ~/.ssh/config << 'SSHCONFIG'
-          Host 100.*
+          Host 10.241.150.21
             StrictHostKeyChecking no
             UserKnownHostsFile /dev/null
             PasswordAuthentication no
@@ -69,23 +69,23 @@ jobs:
           
           chmod 600 ~/.ssh/config
           
-          echo "=== Testing SSH connection with verbose output ==="
-          ssh -vvv -i ~/.ssh/id_rsa -o ConnectTimeout=30 $DEPLOY_USER@$DEPLOY_HOST "echo 'SSH connection successful'; whoami; pwd; uname -a" || {
+          echo "=== Testing SSH connection to school network ==="
+          ssh -vvv -i ~/.ssh/id_rsa -o ConnectTimeout=30 $DEPLOY_USER@10.241.150.21 "echo 'SSH connection successful'; whoami; pwd; uname -a" || {
             echo "SSH connection failed. Checking common issues..."
             echo "1. Verifying target host is reachable:"
-            ping -c 3 $DEPLOY_HOST || echo "Host unreachable"
+            ping -c 3 10.241.150.21 || echo "Host unreachable"
             echo "2. Checking SSH service:"
-            nc -zv $DEPLOY_HOST 22 || echo "SSH port not responding"
+            nc -zv 10.241.150.21 22 || echo "SSH port not responding"
             echo "3. SSH key fingerprint:"
             ssh-keygen -lf ~/.ssh/id_rsa
             exit 1
           }
           
           echo "=== Starting deployment ==="
-          # SSH to server and deploy via Tailscale
-          ssh -i ~/.ssh/id_rsa $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+          # SSH to server and deploy via school network
+          ssh -i ~/.ssh/id_rsa $DEPLOY_USER@10.241.150.21 << 'EOF'
             set -e
-            echo "Connected successfully! Starting deployment..."
+            echo "Connected successfully to school network! Starting deployment..."
             
             # Show current environment
             echo "Current user: $(whoami)"
