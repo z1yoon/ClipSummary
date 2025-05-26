@@ -2,7 +2,7 @@ name: Build and Deploy
 
 on:
   push:
-    branches: [ dev, main ]
+    branches: [ dev, main, enhancement2 ]
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -16,12 +16,11 @@ jobs:
       - name: Install Tailscale
         uses: tailscale/github-action@v2
         with:
-          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          authkey: ${{ secrets.TAILSCALE_KEY }}
       
       - name: SSH to server and deploy
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}  # This should be your server's Tailscale IP
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
@@ -30,9 +29,17 @@ jobs:
           mkdir -p ~/.ssh
           echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
           
-          # SSH to server and deploy
+          # Add Tailscale IP to known hosts (bypass host key checking for Tailscale IPs)
+          echo "Host 100.*" >> ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+          
+          # Test connection first
+          echo "Testing connection to $DEPLOY_HOST..."
+          ssh -i ~/.ssh/id_rsa -o ConnectTimeout=10 $DEPLOY_USER@$DEPLOY_HOST "echo 'Connection successful'"
+          
+          # SSH to server and deploy via Tailscale
           ssh -i ~/.ssh/id_rsa $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
             set -e
             
