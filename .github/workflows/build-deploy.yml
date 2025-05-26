@@ -1,66 +1,47 @@
-name: Build and Deploy
+name: Simple Deploy
 
 on:
   push:
-    branches: [ dev, main ]
-  workflow_dispatch: # Allow manual triggering
+    branches: [ dev, main, enhancement2 ]
+  workflow_dispatch:
 
 jobs:
-  build-deploy:
+  deploy:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Install Tailscale
+      - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
-          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          authkey: ${{ secrets.TAILSCALE_KEY }}
       
-      - name: SSH to server and deploy
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+      - name: Deploy to server
         run: |
-          # Setup SSH key
+          # Setup SSH
           mkdir -p ~/.ssh
-          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
           
-          # SSH to server and deploy
-          ssh -i ~/.ssh/id_rsa $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
-            set -e
-            
-            # Navigate to deployment directory
+          # SSH and deploy
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             cd ${{ secrets.DEPLOY_DIR }}
-            
-            # Pull latest changes
-            git fetch origin
-            git checkout ${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
-            # Stop existing containers
-            docker-compose down || true
+            # Use sudo for docker commands to fix permission issues
+            echo "Stopping existing containers..."
+            sudo docker compose down || true
             
-            # Build and deploy with docker-compose
-            docker-compose build --no-cache
-            docker-compose up -d
+            echo "Building and starting containers..."
+            sudo docker compose up -d --build
             
-            # Wait for services to start
             echo "Waiting for services to start..."
             sleep 30
             
-            # Check if services are running
-            docker-compose ps
-            
-            # Show recent logs for debugging
-            echo "=== Recent logs (last 30 lines) ==="
-            docker-compose logs --tail=30
+            echo "Checking container status..."
+            sudo docker compose ps
             
             echo "Deployment completed successfully!"
           EOF
