@@ -1,94 +1,34 @@
-name: Test SSH Connection
+name: Simple Deploy
 
 on:
   push:
     branches: [ dev, main, enhancement2 ]
-  workflow_dispatch: # Allow manual triggering
+  workflow_dispatch:
 
 jobs:
-  test-ssh:
+  deploy:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Check Runner Network Info
-        run: |
-          echo "=== GitHub Runner Network Information ==="
-          echo "Public IP address:"
-          curl -s https://api.ipify.org || echo "Could not get public IP"
-          echo ""
-          echo "Network interfaces:"
-          ip addr show || ifconfig
-          echo ""
-          echo "Routing table:"
-          ip route || route -n
-          echo ""
-      
-      - name: Install Tailscale
+      - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TAILSCALE_KEY }}
-          hostname: github-actions-${{ github.run_id }}
       
-      - name: Wait for Tailscale connection
+      - name: Deploy to server
         run: |
-          echo "=== Waiting for Tailscale to establish connection ==="
-          sleep 10
-          tailscale status
-          echo ""
-          echo "=== Tailscale IP ==="
-          tailscale ip -4
-          echo ""
-          echo "=== Updated network interfaces after Tailscale ==="
-          ip addr show || ifconfig
-          echo "=== Tailscale connection established ==="
-      
-      - name: Test SSH Connection Only
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-        run: |
-          echo "=== Setting up SSH key ==="
+          # Setup SSH
           mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          
-          # Setup SSH key
-          echo "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          echo "=== SSH Key Info ==="
-          echo "SSH key first line:"
-          head -1 ~/.ssh/id_rsa
-          echo "SSH key last line:"
-          tail -1 ~/.ssh/id_rsa
-          echo "SSH key size:"
-          wc -l ~/.ssh/id_rsa
-          
-          echo "=== Testing connectivity with ping ==="
-          ping -c 3 $DEPLOY_HOST || echo "Ping failed, but that's okay - some servers block ping"
-          
-          echo "=== Testing SSH port with timeout ==="
-          timeout 10 bash -c "</dev/tcp/$DEPLOY_HOST/22" && echo "SSH port 22 is open" || echo "SSH port 22 test failed"
-          
-          echo "=== Attempting SSH connection ==="
-          ssh -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=30 \
-              -o ServerAliveInterval=60 \
-              -i ~/.ssh/id_rsa \
-              $DEPLOY_USER@$DEPLOY_HOST \
-              "echo 'SSH SUCCESS: Connected to server!'; whoami; hostname; date; pwd" || {
-            echo "=== SSH connection failed, trying with verbose output ==="
-            ssh -vvv \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                -o ConnectTimeout=30 \
-                -i ~/.ssh/id_rsa \
-                $DEPLOY_USER@$DEPLOY_HOST \
-                "echo 'SSH connection successful'" || echo "SSH failed even with verbose output"
-          }
-          
-          echo "=== Test completed ==="
+          # SSH and deploy
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            cd ${{ secrets.DEPLOY_DIR }}
+            git pull origin ${{ github.ref_name }}
+            docker-compose down
+            docker-compose up -d --build
+          EOF
