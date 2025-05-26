@@ -29,6 +29,21 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             cd ${{ secrets.DEPLOY_DIR }}
             git pull origin ${{ github.ref_name }}
-            docker-compose down
-            docker-compose up -d --build
+            
+            # Try docker compose (new format) first, then fall back to docker-compose
+            if command -v docker &> /dev/null; then
+              echo "Using docker compose (new format)"
+              docker compose down || true
+              docker compose up -d --build
+            elif command -v docker-compose &> /dev/null; then
+              echo "Using docker-compose (legacy format)"
+              docker-compose down || true
+              docker-compose up -d --build
+            else
+              echo "Neither docker compose nor docker-compose found!"
+              echo "Available commands:"
+              which docker || echo "docker not found"
+              which docker-compose || echo "docker-compose not found"
+              exit 1
+            fi
           EOF
