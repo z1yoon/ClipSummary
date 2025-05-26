@@ -30,20 +30,18 @@ jobs:
             cd ${{ secrets.DEPLOY_DIR }}
             git pull origin ${{ github.ref_name }}
             
-            # Try docker compose (new format) first, then fall back to docker-compose
-            if command -v docker &> /dev/null; then
-              echo "Using docker compose (new format)"
-              docker compose down || true
-              docker compose up -d --build
-            elif command -v docker-compose &> /dev/null; then
-              echo "Using docker-compose (legacy format)"
-              docker-compose down || true
-              docker-compose up -d --build
-            else
-              echo "Neither docker compose nor docker-compose found!"
-              echo "Available commands:"
-              which docker || echo "docker not found"
-              which docker-compose || echo "docker-compose not found"
-              exit 1
-            fi
+            # Use sudo for docker commands to fix permission issues
+            echo "Stopping existing containers..."
+            sudo docker compose down || true
+            
+            echo "Building and starting containers..."
+            sudo docker compose up -d --build
+            
+            echo "Waiting for services to start..."
+            sleep 30
+            
+            echo "Checking container status..."
+            sudo docker compose ps
+            
+            echo "Deployment completed successfully!"
           EOF
